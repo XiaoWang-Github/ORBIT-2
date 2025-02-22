@@ -28,6 +28,9 @@ model:
   mlp_ratio: 4
   drop_path: 0.1
   drop_rate: 0.1
+  adaptive_patching: True
+  separate_channels: False
+  fixed_length: 34
 
 # ---------------------------- DATA -------------------------------------------
 data:

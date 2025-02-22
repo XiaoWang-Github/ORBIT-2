@@ -2,6 +2,7 @@
 from .components.cnn_blocks import PeriodicConv2D
 from .components.pos_embed import get_2d_sincos_pos_embed
 from .utils import register
+from .adaptive_patching import Patchify
 
 # Third party
 import torch
@@ -31,6 +32,9 @@ class Res_Slim_ViT(nn.Module):
         decoder_depth=8,
         num_heads=16,
         mlp_ratio=4.0,
+        adaptive_patching=False,
+        separate_channels=False,
+        fixed_length=4096,
     ):
         super().__init__()
         self.default_vars = default_vars
@@ -42,13 +46,31 @@ class Res_Slim_ViT(nn.Module):
         self.in_channels = in_channels * history
         self.out_channels = out_channels
         self.patch_size = patch_size
+        self.adaptive_patching = adaptive_patching
+        self.separate_channels = separate_channels
 
         self.history = history
 
-        self.token_embeds = nn.ModuleList(
-            [PatchEmbed(img_size, patch_size, 1, embed_dim) for i in range(len(default_vars))]
-        )
-        self.num_patches = self.token_embeds[0].num_patches
+        if self.adaptive_patching:
+            patch_dim = self.in_channels*self.patch_size**2
+            patch_dim_woc = self.patch_size**2
+            self.token_embeds = nn.ModuleList(
+                #[nn.Linear(patch_dim, embed_dim) for i in range(len(default_vars))]
+                [nn.Linear(patch_dim_woc, embed_dim) for i in range(len(default_vars))]
+            )
+            self.num_patches = fixed_length
+            if self.adaptive_patching:
+                if self.separate_channels:
+                    #self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1, sths=[self.gauss_filter_order])
+                    self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1)
+                else:
+                    #self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=num_channels, sths=[self.gauss_filter_order])
+                    self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=self.in_channels)
+        else:
+            self.token_embeds = nn.ModuleList(
+                [PatchEmbed(img_size, patch_size, 1, embed_dim) for i in range(len(default_vars))]
+            )
+            self.num_patches = self.token_embeds[0].num_patches
 
         # variable embedding to denote which variable each token belongs to
         # helps in aggregating variables
@@ -59,9 +81,13 @@ class Res_Slim_ViT(nn.Module):
         self.var_query = nn.Parameter(torch.zeros(1, 1, embed_dim), requires_grad=True)
         self.var_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
 
-        self.pos_embed = nn.Parameter(
-            torch.zeros(1, self.num_patches, embed_dim), requires_grad=learn_pos_emb
-        )
+        if self.adaptive_patching:
+            self.pos_embed = nn.Parameter(torch.randn(1, self.num_patches, embed_dim) * .02, requires_grad=learn_pos_emb
+            )
+        else:    
+            self.pos_embed = nn.Parameter(
+                torch.zeros(1, self.num_patches, embed_dim), requires_grad=learn_pos_emb
+            )
         self.pos_drop = nn.Dropout(p=drop_rate)
         dpr = [x.item() for x in torch.linspace(0, drop_path, depth)]
         self.blocks = nn.ModuleList(
@@ -110,13 +136,14 @@ class Res_Slim_ViT(nn.Module):
         self.initialize_weights()
 
     def initialize_weights(self):
-        pos_embed = get_2d_sincos_pos_embed(
-            self.pos_embed.shape[-1],
-            self.img_size[0] // self.patch_size,
-            self.img_size[1] // self.patch_size,
-            cls_token=False,
-        )
-        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+        if not self.adaptive_patching:
+            pos_embed = get_2d_sincos_pos_embed(
+                self.pos_embed.shape[-1],
+                self.img_size[0] // self.patch_size,
+                self.img_size[1] // self.patch_size,
+                cls_token=False,
+            )
+            self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -192,9 +219,26 @@ class Res_Slim_ViT(nn.Module):
 
         return x
 
+    def deserialize(self, x: torch.Tensor, qdt_list):
+        B = x.shape[0]
+        c = self.out_channels
+        device = x.device
+
+
+        x_list = []
+        #print("X0_SHAPE", x[0].shape, flush=True)
+        for i in range(B):
+            if self.separate_channels:
+                x_list.append(torch.from_numpy(qdt_list[i][0].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size, c)).to(torch.bfloat16).to(device))
+            else:
+                x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size, c)).to(torch.bfloat16).to(device))
+
+        x = torch.stack([torch.moveaxis(x_list[i],-1,0) for i in range(len(x_list))])
+        return x
 
 
     def forward_encoder(self, x: torch.Tensor, variables):
+        device = x.device
 
         if isinstance(variables, list):
             variables = tuple(variables)
@@ -202,10 +246,37 @@ class Res_Slim_ViT(nn.Module):
         #tokenize each variable separately
         embeds = []
         var_ids = self.get_var_ids(variables, x.device)
+        
+        if self.adaptive_patching:
+            B = x.shape[0]
+            C = x.shape[1]
+            seq_img_list = []
+            qdt_list = []
+            for i in range(B):
+                if self.separate_channels:
+                    seq_img_channel_list = []
+                    qdt_list.append([])
+                    for j in range(C):
+                        x_np = np.expand_dims(x[i,j].to(torch.float32).detach().cpu().numpy(), axis=-1)
+                        seq_img, qdt = self.patchify(x_np)
+                        seq_img_channel_list.append(seq_img)
+                        qdt_list[i].append(qdt)
+                    seq_img_list.append(np.stack([seq_image_channel_list[k] for k in range(len(seq_image_channel_list))]))
+                else:
+                    x_np = np.moveaxis(x[i].to(torch.float32).detach().cpu().numpy(), 0, -1)
+                    seq_img, qdt = self.patchify(x_np)
+                    seq_img_list.append(seq_img)
+                    qdt_list.append(qdt)
+
+            x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.bfloat16).to(device)
+            
 
         for i in range(len(var_ids)):
             id = var_ids[i]
-            embeds.append(self.token_embeds[id](x[:, i : i + 1]))
+            if self.adaptive_patching:
+                embeds.append(self.token_embeds[id](torch.squeeze(x[:,i : i+1])))
+            else:
+                embeds.append(self.token_embeds[id](x[:,i : i+1]))
         x = torch.stack(embeds, dim=1)  # B, V, L, D
 
         # add variable embedding
@@ -228,7 +299,11 @@ class Res_Slim_ViT(nn.Module):
             x = blk(x)
         # x.shape = [B,num_patches,embed_dim]
         x = self.norm(x)
-        return x
+
+        if not self.adaptive_patching:
+            qdt_list = None
+
+        return x, qdt_list
 
     def forward(self, x, in_variables):
         if len(x.shape) == 5:  # x.shape = [B,T,in_channels,H,W]
@@ -237,13 +312,16 @@ class Res_Slim_ViT(nn.Module):
 
         path2_result = self.path2(x)
         
-        x = self.forward_encoder(x, in_variables)
+        x, qdt_list = self.forward_encoder(x, in_variables)
 
         # x.shape = [B,num_patches,embed_dim]
 
         x = self.to_img(x) 
         # x.shape = [B,num_patches,out_channels*patch_size*patch_size]
-        x = self.unpatchify(x)
+        if self.adaptive_patching:
+            x = self.deserialize(x, qdt_list)
+        else:
+            x = self.unpatchify(x)
         # x.shape = [B,num_patches,h*patch_size, w*patch_size]
  
         x = self.path1(x)
