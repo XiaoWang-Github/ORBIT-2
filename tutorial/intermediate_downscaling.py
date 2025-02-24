@@ -250,15 +250,19 @@ def main(device):
     if adaptive_patching:
         separate_channels = conf['model']['separate_channels']
         fixed_length = conf['model']['fixed_length']
+        physics = conf['model']['physics']
+        edge_percentage = conf['model']['edge_percentage']
     else:
         separate_channels = None
         fixed_length = None
+        physics = None
+        edge_percentage = None
 
     if world_rank==0:
         print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"default_vars",default_vars,"preset",preset," ",out_variable," ",out_var_dict,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,flush=True)
 
 
-    model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'separate_channels':separate_channels,'fixed_length':fixed_length}
+    model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'separate_channels':separate_channels,'fixed_length':fixed_length, 'physics':physics, 'edge_percentage':edge_percentage}
 
 
     if world_rank==0:
@@ -490,7 +494,7 @@ def main(device):
 
 
         if world_rank ==0:    
-            checkpoint_path = "/lustre/orion/stf006/proj-shared/irl1/checkpoints/climate-ar" 
+            checkpoint_path = "/lustre/orion/stf006/proj-shared/irl1/checkpoints/climate-ar-128-sep-phys-test" 
             # Check whether the specified checkpointing path exists or not
             isExist = os.path.exists(checkpoint_path)
             if not isExist:

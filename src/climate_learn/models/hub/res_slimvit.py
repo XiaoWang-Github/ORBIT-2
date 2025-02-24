@@ -35,6 +35,8 @@ class Res_Slim_ViT(nn.Module):
         adaptive_patching=False,
         separate_channels=False,
         fixed_length=4096,
+        physics=False,
+        edge_percentage=.1,
     ):
         super().__init__()
         self.default_vars = default_vars
@@ -62,10 +64,10 @@ class Res_Slim_ViT(nn.Module):
             if self.adaptive_patching:
                 if self.separate_channels:
                     #self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1, sths=[self.gauss_filter_order])
-                    self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1)
+                    self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1, physics=physics, edge_percentage=edge_percentage)
                 else:
                     #self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=num_channels, sths=[self.gauss_filter_order])
-                    self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=self.in_channels)
+                    self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=self.in_channels, physics=physics, edge_percentage=edge_percentage)
         else:
             self.token_embeds = nn.ModuleList(
                 [PatchEmbed(img_size, patch_size, 1, embed_dim) for i in range(len(default_vars))]
@@ -261,7 +263,7 @@ class Res_Slim_ViT(nn.Module):
                         seq_img, qdt = self.patchify(x_np)
                         seq_img_channel_list.append(seq_img)
                         qdt_list[i].append(qdt)
-                    seq_img_list.append(np.stack([seq_image_channel_list[k] for k in range(len(seq_image_channel_list))]))
+                    seq_img_list.append(np.stack([seq_img_channel_list[k] for k in range(len(seq_img_channel_list))]))
                 else:
                     x_np = np.moveaxis(x[i].to(torch.float32).detach().cpu().numpy(), 0, -1)
                     seq_img, qdt = self.patchify(x_np)
