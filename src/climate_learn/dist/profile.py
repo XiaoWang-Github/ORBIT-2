@@ -4,6 +4,7 @@ import gptl4py as gp
 from contextlib import contextmanager
 import torch.distributed as dist
 import os
+import torch
 
 
 class ProfileTimer:
@@ -18,6 +19,7 @@ class ProfileTimer:
 
     def end(self, name, check_epoch=False):
         self.timers[name] = False
+        torch.cuda.synchronize()
         gp.stop(name)
 
     def isactive(self, name):

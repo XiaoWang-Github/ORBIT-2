@@ -16,23 +16,19 @@
 
 #ulimit -n 65536
 
-
-
-source ~/miniconda3/etc/profile.d/conda.sh
-
 module load PrgEnv-gnu
-module load gcc/12.2.0
-module load rocm/6.2.0
+module load rocm/6.2.4
+module unload darshan-runtime
+module unload libfabric
 
-eval "$(/lustre/orion/world-shared/stf218/atsaris/env_test_march/miniconda/bin/conda shell.bash hook)"
+source /lustre/orion/world-shared/lrn036/jyc/frontier/sw/anaconda3/2023.09/etc/profile.d/conda.sh
 
-conda activate /lustre/orion/lrn036/world-shared/xf9/flash-attention-torch25
+eval "$(/lustre/orion/world-shared/lrn036/jyc/frontier/sw/anaconda3/2023.09/bin/conda shell.bash hook)"
 
-#export LD_LIBRARY_PATH=/lustre/orion/world-shared/stf218/junqi/climax/rccl-plugin-rocm6/lib/:/opt/rocm-6.2.0/lib:$LD_LIBRARY_PATH
+conda activate /lustre/orion/world-shared/lrn036/jyc/frontier/sw/superres 
 
-## DDStore and GPTL Timer
 module use -a /lustre/orion/world-shared/lrn036/jyc/frontier/sw/modulefiles
-module load SR_tools
+module load libfabric/1.22.0p
 
 
 export MIOPEN_DISABLE_CACHE=1
@@ -48,7 +44,7 @@ export PYTHONPATH=$PWD/../src:$PYTHONPATH
 
 export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
 
-time srun -n $((SLURM_JOB_NUM_NODES*8)) \
+time srun -n $((SLURM_JOB_NUM_NODES*8)) --export=ALL,LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6 \
 python ./intermediate_downscaling.py ../configs/interm.yaml
 
 #time srun -n $((SLURM_JOB_NUM_NODES*8)) \

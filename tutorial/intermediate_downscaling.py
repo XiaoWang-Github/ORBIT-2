@@ -441,10 +441,10 @@ def main(device):
                 torch.cuda.synchronize(device=device)
                 tic1 = time.perf_counter() 
 
-            #timer.begin("training_step")
+            #timer.begin("forward")
             ## torch.Size([64, 20, 32, 64]), torch.Size([64, 1, 128, 256])
             loss = training_step(batch, batch_idx,model,device,train_loss)
-            #timer.end("training_step")
+            #timer.end("forward")
 
             epoch_loss += loss.detach()
     
