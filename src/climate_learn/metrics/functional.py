@@ -1,5 +1,5 @@
 # Standard library
-from typing import Optional, Union
+from typing import Optional, Union, List, Dict
 
 from sympy import true
 
@@ -100,13 +100,27 @@ def image_gradient_fn(pred:Pred,
 def mse(
     pred: Pred,
     target: Union[torch.FloatTensor, torch.DoubleTensor],
+    var_names: Optional[List[str]] = None,
+    var_weights: Optional[Dict[str, float]] = None,
     aggregate_only: bool = False,
     lat_weights: Optional[Union[torch.FloatTensor, torch.DoubleTensor]] = None,
 ) -> Union[torch.FloatTensor, torch.DoubleTensor]:
+
     error = (pred - target).square()
     #print('during  mse with error', error.dtype, pred.dtype, target.dtype)
     if lat_weights is not None:
         error = error * lat_weights
+
+    if var_names is not None:
+        assert len(var_names) == pred.shape[1], "Number of variable names must match channel dimension"
+
+        channel_weights = torch.ones(pred.shape[1], device=pred.device, dtype=pred.dtype)
+        for i, var in enumerate(var_names):
+            weight = var_weights.get(var, 1.0)
+            channel_weights[i] = weight
+        weights_expanded = channel_weights.view(1, -1, 1, 1)
+        error = error * weights_expanded
+
     per_channel_losses = error.mean([0, 2, 3])
     loss = error.mean()
     if aggregate_only:

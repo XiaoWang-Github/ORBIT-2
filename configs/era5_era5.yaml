@@ -34,6 +34,11 @@ data:
   low_res_dir: "/lustre/orion/lrn036/world-shared/ERA5_npz/5.625_deg/"
   high_res_dir: "/lustre/orion/lrn036/world-shared/ERA5_npz/1.40625_deg/"
 
+  spatial_resolution: {
+    'ERA5_1': 625,
+    'ERA5_2': 111,
+    'PRISM':  18,
+  }
 
 
   default_vars: [
@@ -66,13 +71,14 @@ data:
   }
 
 
-  out_var_dict: {
+  dict_out_variables: {
       "t2m": "2m_temperature",
       "z500": "geopotential_500",
       "t50": "temperature_50",
       "t250": "temperature_250",
       "t850": "temperature_850",
       "u10": "10m_u_component_of_wind",
+      "v10": "10m_v_component_of_wind",
       "prcp": "prcp",
       "orography": "orography",
       "temperature": "temperature",
@@ -80,5 +86,11 @@ data:
       
   }
 
+  out_variable: ["t2m","u10","v10"]
 
-  out_variable: ["t2m","u10","z500"]
+  var_weights: {
+    "2m_temperatur": 1,
+    "10m_u_component_of_wind": 0.1,
+    "10m_v_component_of_wind": 0.1,
+    }
+

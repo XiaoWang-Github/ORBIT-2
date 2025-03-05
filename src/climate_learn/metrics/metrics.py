@@ -1,5 +1,5 @@
 # Standard Library
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Union, List, Dict
 
 # Local application
 from .utils import MetricsMetaInfo, register
@@ -201,27 +201,32 @@ class IMAGEGRADIENT(Metric):
 
 @register("mse")
 class MSE(Metric):
-    """Computes standard mean-squared error."""
+    """Computes weighted mean-squared error with variable-specific weights."""
 
     def __call__(
         self,
         pred: Union[torch.FloatTensor, torch.DoubleTensor],
         target: Union[torch.FloatTensor, torch.DoubleTensor],
+        var_names: Optional[List[str]] = None,
+        var_weights: Optional[Dict[str, float]] = None
     ) -> Union[torch.FloatTensor, torch.DoubleTensor]:
-        r"""
-        .. highlight:: python
-
-        :param pred: The predicted values of shape [B,C,H,W].
-        :type pred: torch.FloatTensor|torch.DoubleTensor
-        :param target: The ground truth target values of shape [B,C,H,W].
-        :type target: torch.FloatTensor|torch.DoubleTensor
-
-        :return: A singleton tensor if `self.aggregate_only` is `True`. Else, a
-            tensor of shape [C+1], where the last element is the aggregate
-            MSE, and the preceding elements are the channel-wise MSEs.
-        :rtype: torch.FloatTensor|torch.DoubleTensor
         """
-        return mse(pred, target, self.aggregate_only)
+        Compute the weighted MSE loss.
+        
+        Args:
+            pred: Predictions tensor of shape [B,C,H,W]
+            target: Target tensor of shape [B,C,H,W]
+            
+        Returns:
+            Loss tensor
+        """
+        return mse(
+            pred,
+            target,
+            var_names,
+            var_weights,
+            self.aggregate_only
+        )
 
 
 
