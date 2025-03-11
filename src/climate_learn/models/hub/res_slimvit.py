@@ -56,21 +56,19 @@ class Res_Slim_ViT(nn.Module):
         self.spatial_resolution = 0
         self.spatial_embed = nn.Linear(1, embed_dim)
 
+        self.token_embeds = nn.ModuleList(
+            [PatchEmbed(img_size, patch_size, 1, embed_dim) for i in range(len(default_vars))]
+        )
+
         if self.adaptive_patching:
-            patch_dim = self.in_channels*self.patch_size**2
-            patch_dim_woc = self.patch_size**2
-            self.token_embeds = nn.ModuleList(
-                #[nn.Linear(patch_dim, embed_dim) for i in range(len(default_vars))]
-                [nn.Linear(patch_dim_woc, embed_dim) for i in range(len(default_vars))]
-            )
             self.num_patches = fixed_length
-            self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=self.in_channels)
+            self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1)
+            self.to_img = nn.Linear(embed_dim,patch_size**2)
+            self.to_emb = nn.Linear(patch_size**2,embed_dim)
+            #self.magnify = nn.Linear(self.out_channels*patch_size**2, self.out_channels*(patch_size*superres_mag)**2)
         else:
-            self.token_embeds = nn.ModuleList(
-                [PatchEmbed(img_size, patch_size, 1, embed_dim) for i in range(len(default_vars))]
-            )
             self.num_patches = self.token_embeds[0].num_patches
-        
+
         # variable embedding to denote which variable each token belongs to
         # helps in aggregating variables
 
@@ -125,7 +123,7 @@ class Res_Slim_ViT(nn.Module):
         self.path1.append(nn.Conv2d(in_channels=cnn_ratio, out_channels=out_channels, kernel_size=(3, 3), stride=1, padding=1))
         self.path1 = nn.Sequential(*self.path1)
 
-        self.to_img = nn.Linear(embed_dim, out_channels * patch_size**2)
+        self.to_img_dec = nn.Linear(embed_dim, out_channels * patch_size**2)
 
         self.head = nn.ModuleList()
         for _ in range(decoder_depth):
@@ -169,7 +167,7 @@ class Res_Slim_ViT(nn.Module):
             self.out_channels = out_channels
             if self.adaptive_patching:
                 self.num_patches = fixed_length
-                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=in_channels)
+                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1)
             else:
                 self.num_patches = img_size[0] * img_size[1]// (self.patch_size **2)
        
@@ -280,28 +278,9 @@ class Res_Slim_ViT(nn.Module):
         embeds = []
         var_ids = self.get_var_ids(variables, x.device)
 
-        if self.adaptive_patching:
-            B = x.shape[0]
-            seq_img_list = []
-            qdt_list = []
-            for i in range(B):
-                x_np = np.moveaxis(x[i].to(torch.float32).detach().cpu().numpy(), 0, -1)
-                seq_img, qdt = self.patchify(x_np)
-                seq_img_list.append(seq_img)
-                qdt_list.append(qdt)
-
-            x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.bfloat16).to(x.device)
-            #x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.float32).to(x.device)
-
         for i in range(len(var_ids)):
             id = var_ids[i]
-            if self.adaptive_patching:
-                if x.shape[0] == 1:
-                    embeds.append(self.token_embeds[id](x[:,i : i+1]))
-                else:
-                    embeds.append(self.token_embeds[id](torch.squeeze(x[:,i : i+1])))
-            else: 
-                embeds.append(self.token_embeds[id](x[:,i : i+1]))
+            embeds.append(self.token_embeds[id](x[:, i : i + 1]))
         x = torch.stack(embeds, dim=1)  # B, V, L, D
         if self.adaptive_patching and x.shape[0] == 1:
             x = torch.squeeze(x,dim=2)
@@ -315,8 +294,27 @@ class Res_Slim_ViT(nn.Module):
         x = self.aggregate_variables(x)  # B, L, D, 
 
         # x.shape = [B,num_patches,embed_dim]
-
         if self.adaptive_patching:
+            #Feature Space to Image Space
+            x = self.to_img(x)
+            # x.shape = [B,num_patches,patch_size*patch_size]
+            x = self.unpatchify(x,scaling=1)
+            # x.shape = [B,out_channels,h*patch_size, w*patch_size]
+
+            B = x.shape[0]
+            seq_img_list = []
+            qdt_list = []
+            for i in range(B):
+                x_np = np.moveaxis(x[i].to(torch.float32).detach().cpu().numpy(), 0, -1)
+                seq_img, qdt = self.patchify(x_np)
+                seq_img_list.append(seq_img)
+                qdt_list.append(qdt)
+            x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.bfloat16).to(x.device)
+            #x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.float32).to(x.device)
+            # x.shape = [B,fixed_length,patch_size*patch_size]
+
+            x = self.to_emb(x)
+            # x.shape = [B,fixed_length,embed_dim]
             pos_emb = interpolate_pos_embed_on_the_fly_adaptive(self.pos_embed,self.num_patches)
 
         #if torch.distributed.get_rank()==0:
@@ -324,6 +322,15 @@ class Res_Slim_ViT(nn.Module):
         else:
             qdt_list = None
             pos_emb = interpolate_pos_embed_on_the_fly(self.pos_embed,self.patch_size,self.img_size)
+
+        #if self.adaptive_patching:
+        #    pos_emb = interpolate_pos_embed_on_the_fly_adaptive(self.pos_embed,self.num_patches)
+
+        ##if torch.distributed.get_rank()==0:
+        ##    print("after patch_embed x.shape",x.shape,flush=True)
+        #else:
+        #    qdt_list = None
+        #    pos_emb = interpolate_pos_embed_on_the_fly(self.pos_embed,self.patch_size,self.img_size)
 
 
         x = x + pos_emb
@@ -360,7 +367,7 @@ class Res_Slim_ViT(nn.Module):
 
         x,qdt_list = self.forward_encoder(x, in_variables)
 
-        x = self.to_img(x)
+        x = self.to_img_dec(x)
         # x.shape = [B,num_patches,out_channels*patch_size*patch_size]
         if self.adaptive_patching:
             x = self.deserialize(x, qdt_list)
