@@ -38,7 +38,7 @@ from climate_learn.models.hub.components.cnn_blocks import (
     ResidualBlock
 )
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
-from climate_learn.dist.profile import *
+#from climate_learn.dist.profile import *
 
 
 def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path):
@@ -236,6 +236,7 @@ def main(device):
 
     max_epochs=conf['trainer']['max_epochs']
     checkpoint_path = conf['trainer']['checkpoint']
+    checkpoint_folder = conf['trainer']['checkpoint_folder']
     batch_size = conf['trainer']['batch_size']
     num_workers = conf['trainer']['num_workers']
     buffer_size = conf['trainer']['buffer_size']
@@ -268,12 +269,21 @@ def main(device):
     mlp_ratio = conf['model']['mlp_ratio']
     drop_path = conf['model']['drop_path']
     drop_rate = conf['model']['drop_rate']
+    adaptive_patching = conf['model']['adaptive_patching']
+    if adaptive_patching:
+        fixed_length = conf['model']['fixed_length']
+        data_key = list(fixed_length.keys())[0]
+    else:
+        fixed_length = None
 
     if world_rank==0:
-        print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,flush=True)
+        print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,"adaptive_patching",adaptive_patching,"fixed_length",fixed_length,flush=True)
 
 
-    model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate}
+    if adaptive_patching:
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key]}
+    else:
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length}
 
 
     if world_rank==0:
@@ -402,7 +412,10 @@ def main(device):
             _, in_height, in_width = in_shape[1:]
     
             with FSDP.summon_full_params(model):
-                model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars)) 
+                if adaptive_patching:
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length[data_key])
+                else:
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length)
             
     
     
@@ -529,7 +542,8 @@ def main(device):
     
    
                 if world_rank ==0:    
-                    checkpoint_path = "checkpoints/climate" 
+                    #checkpoint_path = "checkpoints/climate_PRISM" 
+                    checkpoint_path = "checkpoints/"+checkpoint_folder
                     # Check whether the specified checkpointing path exists or not
                     isExist = os.path.exists(checkpoint_path)
                     if not isExist:

@@ -1,0 +1,172 @@
+#-----------   TRAINER -------------
+trainer:
+  max_epochs: 100
+  checkpoint:
+  checkpoint_folder: "era5_34"
+  pretrain:
+  batch_size: 64
+  buffer_size: 400
+  num_workers: 2
+
+
+# ---------------------------- MODEL -------------------------------------------
+model:
+  preset: res_slimvit
+  lr: 5e-4
+  weight_decay: 1e-5
+  beta_1: 0.9
+  beta_2: 0.99
+  warmup_epochs: 2
+  warmup_start_lr: 1e-7
+  eta_min: 1e-8
+  superres_mag: 4
+  cnn_ratio: 4
+  patch_size: 4
+  embed_dim: 256
+  depth: 6
+  decoder_depth: 2
+  num_heads: 4
+  mlp_ratio: 4
+  drop_path: 0.1
+  drop_rate: 0.1
+  adaptive_patching: True
+  fixed_length: {
+    'ERA5_1': 34,
+#    'ERA5_2': 127,
+#    'PRISM': 127,
+  }
+
+
+# ---------------------------- DATA -------------------------------------------
+data:
+  low_res_dir: {
+    'ERA5_1': "/lustre/orion/lrn036/world-shared/ERA5_npz/5.625_deg/",
+#    'ERA5_1': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/5.625_deg/",
+#    'ERA5_2': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/1.0_deg/",
+#    'PRISM': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/prism-superres/10.0_arcmin/",
+  }
+  high_res_dir: {
+    'ERA5_1': "/lustre/orion/lrn036/world-shared/ERA5_npz/1.40625_deg/",
+#    'ERA5_1': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/1.40625_deg/",
+#    'ERA5_2': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/0.25_deg/",
+#    'PRISM': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/prism-superres/2.5_arcmin/",
+  }
+
+  # input spatial resolution in km
+  spatial_resolution: {
+    'ERA5_1': 625,
+    'ERA5_2': 111,
+    'PRISM':  18,
+  }
+
+
+
+  default_vars: [
+    "land_sea_mask",
+    "orography",
+    "lattitude",
+    "prcp",
+    "tmin",
+    "tmax",
+    "2m_temperature",
+    "temperature_200",
+    "temperature_500",
+    "temperature_850",
+    "10m_u_component_of_wind",
+    "u_component_of_wind_200",
+    "u_component_of_wind_500",
+    "u_component_of_wind_850",
+    "10m_v_component_of_wind",
+    "v_component_of_wind_200",
+    "v_component_of_wind_500",
+    "v_component_of_wind_850",
+    "specific_humidity_200",
+    "specific_humidity_500",
+    "specific_humidity_850",
+    "total_precipitation",
+  ]
+
+
+
+  dict_in_variables: {
+    'ERA5_1': [
+    "land_sea_mask",
+    "orography",
+    "lattitude",
+    "2m_temperature",
+    "temperature_200",
+    "temperature_500",
+    "temperature_850",
+    "10m_u_component_of_wind",
+    "u_component_of_wind_200",
+    "u_component_of_wind_500",
+    "u_component_of_wind_850",
+    "10m_v_component_of_wind",
+    "v_component_of_wind_200",
+    "v_component_of_wind_500",
+    "v_component_of_wind_850",
+    "specific_humidity_200",
+    "specific_humidity_500",
+    "specific_humidity_850",
+    "total_precipitation",
+    ],
+    'ERA5_2': [
+    "land_sea_mask",
+    "orography",
+    "lattitude",
+    "2m_temperature",
+    "temperature_200",
+    "temperature_500",
+    "temperature_850",
+    "10m_u_component_of_wind",
+    "u_component_of_wind_200",
+    "u_component_of_wind_500",
+    "u_component_of_wind_850",
+    "10m_v_component_of_wind",
+    "v_component_of_wind_200",
+    "v_component_of_wind_500",
+    "v_component_of_wind_850",
+    "specific_humidity_200",
+    "specific_humidity_500",
+    "specific_humidity_850",
+    "total_precipitation",
+    ],
+    'PRISM': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "prcp",
+      "tmin",
+      "tmax",
+    ],
+  }
+
+
+  dict_out_variables: {
+    'ERA5_1':[
+#        "total_precipitation",
+        "2m_temperature",
+#        "10m_u_component_of_wind",
+#        "10m_v_component_of_wind",
+    ],
+    'ERA5_2':[
+      "total_precipitation",
+      "2m_temperature",
+#      "10m_u_component_of_wind",
+#      "10m_v_component_of_wind",
+    ],
+#    'PRISM': ["prcp","tmax","tmin"],
+#    'PRISM': ["prcp"],
+    'PRISM': ["tmax"],
+
+  }
+
+  var_weights: {
+    "2m_temperature": 1,
+    "10m_u_component_of_wind": 0.1,
+    "10m_v_component_of_wind": 0.1,
+    "total_precipitation": 0.1,
+    "prcp": 0.1,
+    "tmin": 1,
+    "tmax": 1,
+    }
