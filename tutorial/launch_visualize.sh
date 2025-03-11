@@ -57,8 +57,8 @@ export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
 
 
 #time srun -n $((SLURM_JOB_NUM_NODES*1)) python ./visualize.py ../configs/era5_era5.yaml
-time srun -n $((SLURM_JOB_NUM_NODES*1)) python ./visualize.py ../configs/experiments/era5_34.yaml
-#time srun -n $((SLURM_JOB_NUM_NODES*1)) python ./visualize.py ../configs/experiments/era5_127.yaml
+time srun -n $((SLURM_JOB_NUM_NODES*1)) python ./visualize.py ../configs/experiments/era5_127.yaml
+#time srun -n $((SLURM_JOB_NUM_NODES*1)) python ./visualize.py ../configs/experiments/era5_34.yaml
 #time srun -n $((SLURM_JOB_NUM_NODES*1)) python ./visualize.py ../configs/inference.yaml
 
 

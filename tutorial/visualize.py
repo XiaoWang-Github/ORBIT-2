@@ -167,8 +167,8 @@ if preset!="vit" and preset!="res_slimvit":
 
 
 # Set up data
-#data_key = "ERA5_1"
-data_key = "PRISM"
+data_key = "ERA5_1"
+#data_key = "PRISM"
 
 in_vars = dict_in_variables[data_key]
 out_vars = dict_out_variables[data_key]
@@ -213,7 +213,7 @@ denorm = test_transforms[0]
 print("denorm is ",denorm,flush=True)
 
 #checkpoint_file = "./checkpoints/climate_ERA5/interm_rank_0_epoch_34.ckpt"
-checkpoint_file = "./checkpoints/"+checkpoint_folder+"/interm_rank_0_epoch_98.ckpt"
+checkpoint_file = "./checkpoints/"+checkpoint_folder+"/interm_rank_0_epoch_29.ckpt"
 
 
 #load pretrained model
@@ -246,8 +246,8 @@ cl.utils.visualize.visualize_at_index(
     out_list=out_vars,
     in_transform=denorm,
     out_transform=denorm,
-    #variable="2m_temperature",
-    variable="tmax",
+    variable="2m_temperature",
+    #variable="tmax",
     src=data_key,
     device = device,
     index=0,  # visualize the first sample of the test set
