@@ -55,7 +55,6 @@ def lat_weighted_quantile(
     loss = torch.abs(losses).mean() 
     return loss
 
-
 @handles_probabilistic
 def image_gradient(
     pred: Pred,
