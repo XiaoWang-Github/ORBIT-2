@@ -78,38 +78,40 @@ def test_on_many_images_lighting(mm, dm, in_transform, out_transform, variable, 
         print(f"Save image data {counter}...")
         counter += 1
         
-def test_on_many_images(mm, dm, in_variables, out_variables, in_transform, out_transform, variable, src, outputdir, device, index=-1):
+def test_on_many_images(mm, dm, in_transform, out_transform, variable, src, outputdir, device, index=0):
     """native_pytorch version """
     print("Start Inference",flush=True)
 
     lat, lon = dm.get_lat_lon()
     extent = [lon.min(), lon.max(), lat.min(), lat.max()]
     out_channel = dm.out_vars.index(variable)
-    try:
-        in_channel = dm.in_vars.index(variable)
-    except KeyError:
-        print(f'in channel does not include {variable}. Set in_channel = -1')
-        in_channel = -1 
-        pass
+    in_channel = dm.in_vars.index(variable)
 
     history = mm.history
 
     print("out_channel",out_channel,"history",history,flush=True)
 
+    if src == "era5":
+        variable_with_units = f"{variable} ({ERA5_VAR_TO_UNIT[variable]})"
+    elif src == "cmip6":
+        variable_with_units = f"{variable} ({CMIP6_VAR_TO_UNIT[variable]})"
+    elif src == "prism":
+        variable_with_units = f"Daily Max Temperature (C)"
+    else:
+        raise NotImplementedError(f"{src} is not a supported source")
+
     counter = 0
+    adj_index = 0
     for batch in dm.test_dataloader():
         #FIXME select "second" index and then flip
         xx, y = batch[:2]
         batch_size = xx.shape[0]
         xx = xx.to(device)
-        pred = mm.forward(xx, in_variables,out_variables)
+        pred = mm.forward(xx)
 
         if counter == 0: print(f"xx {xx.shape} Batch size: {batch_size}")
         if dm.task == "downscaling":
-            if in_channel >= 0:
-                img = in_transform(xx)[:, in_channel].detach().cpu().numpy()
-            else:
-                img = None
+            img = in_transform(xx)[:, in_channel].detach().cpu().numpy()
         else:
             img = in_transform(xx[0])[in_channel].detach().cpu().numpy()
         if src == "era5":
@@ -140,14 +142,10 @@ def test_on_many_images(mm, dm, in_variables, out_variables, in_transform, out_t
 
         # Save image datasets
         os.makedirs(outputdir, exist_ok=True)
-        if not isinstance(img, type(None)) and counter == 0: np.save(os.path.join(outputdir, f'input_{str(counter).zfill(4)}.npy'), img)
+        if counter == 0: np.save(os.path.join(outputdir, f'input_{str(counter).zfill(4)}.npy'), img)
         np.save(os.path.join(outputdir, f'groundtruth_{str(counter).zfill(4)}.npy'), yy)
         np.save(os.path.join(outputdir, f'prediction_{str(counter).zfill(4)}.npy'), ppred)
 
         # Counter
         print(f"Save image data {counter}...")
-        
-        if counter == index:
-            break
-        
         counter += 1
