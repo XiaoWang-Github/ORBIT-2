@@ -118,9 +118,8 @@ class Res_Slim_ViT(nn.Module):
 
 
         self.to_out = nn.ModuleList()
-        for _ in range(decoder_depth):
-            self.to_out.append(nn.Linear(out_channels, embed_dim))
-            self.to_out.append(nn.GELU())
+        self.to_out.append(nn.Linear(out_channels, embed_dim))
+        self.to_out.append(nn.GELU())
         self.to_out.append(nn.Linear(embed_dim,out_channels ))
         self.to_out = nn.Sequential(*self.to_out)
         
@@ -326,12 +325,11 @@ class Res_Slim_ViT(nn.Module):
             preds = x + path2_result[:,:,0:x.size(dim=2),0:x.size(dim=3)]
         else:
             preds = x + path2_result
-
+        
         preds = torch.einsum("bohw->bhwo", preds)
 
         preds = self.to_out(preds)
 
         preds = torch.einsum("bhwo->bohw", preds)
-
 
         return preds
