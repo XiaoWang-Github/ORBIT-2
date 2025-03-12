@@ -119,7 +119,9 @@ class Res_Slim_ViT(nn.Module):
         for _ in range(decoder_depth):
             self.head.append(nn.Linear(embed_dim, embed_dim))
             self.head.append(nn.GELU())
-        self.head.append(nn.Linear(embed_dim,out_channels * patch_size**2))
+        #Variations
+        self.head.append(nn.Linear(embed_dim,out_channels * (superres_mag*patch_size)**2))
+        #self.head.append(nn.Linear(embed_dim,out_channels * patch_size**2))
         self.head = nn.Sequential(*self.head)
         self.initialize_weights()
 
@@ -353,7 +355,8 @@ class Res_Slim_ViT(nn.Module):
         x = self.head(x)
         if self.adaptive_patching:
             # x.shape = [B,fixed_length,out_channels*patch_size*patch_size]
-            x = self.deserialize(x, qdt_list, out_channels=self.out_channels, scaling=1)
+            x = self.deserialize(x, qdt_list, out_channels=self.out_channels, scaling=self.superres_mag)
+            #x = self.deserialize(x, qdt_list, out_channels=self.out_channels, scaling=1)
             # x.shape = [B,out_channels,h, w]
             x = x.reshape(shape=(x.shape[0], self.out_channels, self.img_size[0] // self.patch_size, self.img_size[1] // self.patch_size, self.patch_size, self.patch_size))
             x = torch.einsum("nchwpq->nhwpqc", x)
