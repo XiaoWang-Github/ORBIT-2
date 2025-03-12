@@ -108,20 +108,17 @@ class Res_Slim_ViT(nn.Module):
         self.path2 = nn.Sequential(*self.path2)
 
 
+        self.to_img = nn.Linear(embed_dim,out_channels * (patch_size)**2)
+
+
+
         self.head = nn.ModuleList()
+        self.head.append(nn.Linear(out_channels, embed_dim))
         for _ in range(decoder_depth):
             self.head.append(nn.Linear(embed_dim, embed_dim))
             self.head.append(nn.GELU())
-        self.head.append(nn.Linear(embed_dim,out_channels * (patch_size)**2))
+        self.head.append(nn.Linear(embed_dim,out_channels ))
         self.head = nn.Sequential(*self.head)
-
-
-
-        self.to_out = nn.ModuleList()
-        self.to_out.append(nn.Linear(out_channels, embed_dim))
-        self.to_out.append(nn.GELU())
-        self.to_out.append(nn.Linear(embed_dim,out_channels ))
-        self.to_out = nn.Sequential(*self.to_out)
         
 
         
@@ -314,7 +311,7 @@ class Res_Slim_ViT(nn.Module):
         # x.shape = [B,num_patches,embed_dim]
 
         #decoder
-        x = self.head(x) 
+        x = self.to_img(x) 
         # x.shape = [B,num_patches,out_channels*patch_size*patch_size]
         x = self.unpatchify(x,scaling=1, out_channels=self.out_channels)
         # x.shape = [B,out_channels,h*patch_size, w*patch_size]
@@ -328,7 +325,7 @@ class Res_Slim_ViT(nn.Module):
         
         preds = torch.einsum("bohw->bhwo", preds)
 
-        preds = self.to_out(preds)
+        preds = self.head(preds)
 
         preds = torch.einsum("bhwo->bohw", preds)
 
