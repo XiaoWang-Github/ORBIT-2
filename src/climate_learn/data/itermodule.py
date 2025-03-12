@@ -337,27 +337,16 @@ class IterDataModule(torch.nn.Module):
 
             sampler = torch.utils.data.distributed.DistributedSampler(trainset, num_replicas=ddp_group_size, rank=ddp_group_rank, shuffle=True)
 
-            ddstore_method = int(os.getenv("ORBIT_DDSTORE_METHOD", "1"))
-            if ddstore_method == 0:
-                train_loader = DDStoreDataLoader(
-                    trainset,
-                    batch_size=self.batch_size,
-                    shuffle=False,
-                    drop_last=True,
-                    sampler=sampler,
-                    collate_fn=collate_fn,
-                )
-            else:
-                ## multi-thread
-                train_loader = HydraDataLoader(
-                    trainset,
-                    batch_size=self.batch_size,
-                    shuffle=False,
-                    drop_last=True,
-                    num_workers=self.num_workers,
-                    sampler=sampler,
-                    collate_fn=collate_fn,
-                )
+            train_loader = DDStoreDataLoader(
+            # train_loader = torch.utils.data.DataLoader(
+                trainset.ddstore,
+                trainset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                drop_last=True,
+                sampler=sampler,
+                collate_fn=collate_fn,
+            )
 
             return train_loader
 
