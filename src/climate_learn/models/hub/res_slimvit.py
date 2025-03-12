@@ -65,7 +65,7 @@ class Res_Slim_ViT(nn.Module):
             self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1)
             self.to_img = nn.Linear(embed_dim,patch_size**2)
             self.to_emb = nn.Linear(patch_size**2,embed_dim)
-            #self.magnify = nn.Linear(self.out_channels*patch_size**2, self.out_channels*(patch_size*superres_mag)**2)
+            self.magnify = nn.Linear(self.out_channels*patch_size**2, self.out_channels*(patch_size*superres_mag)**2)
         else:
             self.num_patches = self.token_embeds[0].num_patches
 
@@ -115,21 +115,11 @@ class Res_Slim_ViT(nn.Module):
         self.path2.append(nn.Conv2d(in_channels=cnn_ratio, out_channels=out_channels, kernel_size=(3, 3), stride=1, padding=1)) 
         self.path2 = nn.Sequential(*self.path2)
 
-        #vit path
-        self.path1 = nn.ModuleList()
-        self.path1.append(nn.Conv2d(in_channels=out_channels, out_channels=cnn_ratio*superres_mag*superres_mag, kernel_size=(3, 3), stride=1, padding=1))
-        self.path1.append(nn.GELU())
-        self.path1.append(nn.PixelShuffle(superres_mag))
-        self.path1.append(nn.Conv2d(in_channels=cnn_ratio, out_channels=out_channels, kernel_size=(3, 3), stride=1, padding=1))
-        self.path1 = nn.Sequential(*self.path1)
-
-        self.to_img_dec = nn.Linear(embed_dim, out_channels * patch_size**2)
-
         self.head = nn.ModuleList()
         for _ in range(decoder_depth):
-            self.head.append(nn.Linear(self.img_size[1]//self.patch_size*self.patch_size*superres_mag, self.img_size[1]//self.patch_size*self.patch_size*superres_mag))
+            self.head.append(nn.Linear(embed_dim, embed_dim))
             self.head.append(nn.GELU())
-        self.head.append(nn.Linear(self.img_size[1]//self.patch_size*self.patch_size*superres_mag, self.img_size[1]//self.patch_size*self.patch_size*superres_mag))
+        self.head.append(nn.Linear(embed_dim,out_channels * patch_size**2))
         self.head = nn.Sequential(*self.head)
         self.initialize_weights()
 
@@ -244,15 +234,15 @@ class Res_Slim_ViT(nn.Module):
 
         return x
 
-    def deserialize(self, x: torch.Tensor, qdt_list, out_channels =1):
+    def deserialize(self, x: torch.Tensor, qdt_list, out_channels=1, scaling=1):
         B = x.shape[0]
         #c = self.out_channels
 
 
         x_list = []
         for i in range(B):
-            x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size, out_channels)).to(torch.bfloat16).to(x.device))
-            #x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size, out_channels)).to(torch.float32).to(x.device))
+            x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.bfloat16).to(x.device))
+            #x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.float32).to(x.device))
 
         x = torch.stack([torch.moveaxis(x_list[i],-1,0) for i in range(len(x_list))])
         return x
@@ -323,16 +313,6 @@ class Res_Slim_ViT(nn.Module):
             qdt_list = None
             pos_emb = interpolate_pos_embed_on_the_fly(self.pos_embed,self.patch_size,self.img_size)
 
-        #if self.adaptive_patching:
-        #    pos_emb = interpolate_pos_embed_on_the_fly_adaptive(self.pos_embed,self.num_patches)
-
-        ##if torch.distributed.get_rank()==0:
-        ##    print("after patch_embed x.shape",x.shape,flush=True)
-        #else:
-        #    qdt_list = None
-        #    pos_emb = interpolate_pos_embed_on_the_fly(self.pos_embed,self.patch_size,self.img_size)
-
-
         x = x + pos_emb
 
         # add spatial resolution embedding
@@ -366,23 +346,33 @@ class Res_Slim_ViT(nn.Module):
         path2_result = self.residual_connection(x,out_var_index)     
 
         x,qdt_list = self.forward_encoder(x, in_variables)
+        # x.shape = [B,num_patches,embed_dim]
+        #or
+        # x.shape = [B,fixed_length,embed_dim]
 
-        x = self.to_img_dec(x)
-        # x.shape = [B,num_patches,out_channels*patch_size*patch_size]
+        x = self.head(x)
         if self.adaptive_patching:
-            x = self.deserialize(x, qdt_list)
+            # x.shape = [B,fixed_length,out_channels*patch_size*patch_size]
+            x = self.deserialize(x, qdt_list, out_channels=self.out_channels, scaling=1)
+            # x.shape = [B,out_channels,h, w]
+            x = x.reshape(shape=(x.shape[0], self.out_channels, self.img_size[0] // self.patch_size, self.img_size[1] // self.patch_size, self.patch_size, self.patch_size))
+            x = torch.einsum("nchwpq->nhwpqc", x)
+            x = x.reshape(shape=(x.shape[0], self.img_size[0] // self.patch_size, self.img_size[1] // self.patch_size, self.patch_size*self.patch_size*self.out_channels))
+            # x.shape = [B,num_patches,out_channels*(patch_size)**2]
+            x = self.magnify(x)
+            # x.shape = [B,num_patches,out_channels*(patch_size*mag)**2]
+            x = self.unpatchify(x,scaling=self.superres_mag, out_channels=self.out_channels)
+            # x.shape = [B,out_channels,h*patch_size, w*patch_size]
         else:
-            x = self.unpatchify(x)
-        # x.shape = [B,num_patches,h*patch_size, w*patch_size]
+            # x.shape = [B,num_patches,out_channels*patch_size*patch_size]
+            x = self.unpatchify(x,scaling=self.superres_mag, out_channels=self.out_channels)
+            # x.shape = [B,out_channels,h*patch_size, w*patch_size]
 
-        x = self.path1(x)
 
-        #if path2_result.size(dim=2) !=x.size(dim=2) or path2_result.size(dim=3) !=x.size(dim=3):
-        #    preds = x + path2_result[:,:,0:x.size(dim=2),0:x.size(dim=3)]
-        #else:
-        preds = x + path2_result
+        if path2_result.size(dim=2) !=x.size(dim=2) or path2_result.size(dim=3) !=x.size(dim=3):
+            preds = x + path2_result[:,:,0:x.size(dim=2),0:x.size(dim=3)]
+        else:
+            preds = x + path2_result
 
-        #decoder
-        preds = self.head(preds)
 
         return preds
