@@ -89,6 +89,16 @@ class Res_Slim_ViT(nn.Module):
         )
         self.norm = nn.LayerNorm(embed_dim)
 
+
+        #vit path
+        self.path1 = nn.ModuleList()
+        self.path1.append(nn.Conv2d(in_channels=out_channels, out_channels=cnn_ratio*superres_mag*superres_mag, kernel_size=(3, 3), stride=1, padding=1))
+        self.path1.append(nn.GELU())
+        self.path1.append(nn.PixelShuffle(superres_mag))
+        self.path1.append(nn.Conv2d(in_channels=cnn_ratio, out_channels=out_channels, kernel_size=(3, 3), stride=1, padding=1))
+        self.path1 = nn.Sequential(*self.path1)
+
+
         #skip connection path
         self.path2 = nn.ModuleList()
         self.path2.append(nn.Conv2d(in_channels=out_channels, out_channels=cnn_ratio*superres_mag*superres_mag, kernel_size=(3, 3), stride=1, padding=1)) 
@@ -102,7 +112,7 @@ class Res_Slim_ViT(nn.Module):
         for _ in range(decoder_depth):
             self.head.append(nn.Linear(embed_dim, embed_dim))
             self.head.append(nn.GELU())
-        self.head.append(nn.Linear(embed_dim,out_channels * (superres_mag*patch_size)**2))
+        self.head.append(nn.Linear(embed_dim,out_channels * (patch_size)**2))
         self.head = nn.Sequential(*self.head)
         
         self.initialize_weights()
@@ -296,9 +306,10 @@ class Res_Slim_ViT(nn.Module):
         #decoder
         x = self.head(x) 
         # x.shape = [B,num_patches,out_channels*patch_size*patch_size]
-        x = self.unpatchify(x,scaling=self.superres_mag, out_channels=self.out_channels)
+        x = self.unpatchify(x,scaling=1, out_channels=self.out_channels)
         # x.shape = [B,out_channels,h*patch_size, w*patch_size]
  
+        x = self.path1(x)
  
         if path2_result.size(dim=2) !=x.size(dim=2) or path2_result.size(dim=3) !=x.size(dim=3):
             preds = x + path2_result[:,:,0:x.size(dim=2),0:x.size(dim=3)]
