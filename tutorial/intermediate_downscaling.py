@@ -228,6 +228,7 @@ def main(device):
     print("world_size",world_size,"world_rank",world_rank,"local_rank",local_rank,flush=True)
 
     config_path = sys.argv[1]
+    expname     = sys.argv[2]
 
     if world_rank==0:
         print("config_path",config_path,flush=True)
@@ -268,6 +269,20 @@ def main(device):
     mlp_ratio = conf['model']['mlp_ratio']
     drop_path = conf['model']['drop_path']
     drop_rate = conf['model']['drop_rate']
+
+    # Tak-added for fine-tuning
+    try:
+        loss_function = conf['model']['train_loss']
+    except KeyError:
+        loss_function='mse'
+        print('Train loss is not defined in config file. Select default `mse` ')
+    
+    try:
+        mp_flag = conf['model']['bfloat16'] 
+    except KeyError:
+        mp_flag = True 
+        print('**WARNING* *Mix precesion bfloat16 set ## ON ## in default. Please turn it off if needed')
+    
 
     if world_rank==0:
         print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,flush=True)
@@ -339,7 +354,7 @@ def main(device):
     
             if first_time_bool:
                 # Set up deep learning model
-                model, train_loss,val_losses,test_losses,train_transform,val_transforms,test_transforms = cl.load_downscaling_module(device,model=model, data_module=data_module, architecture=preset,model_kwargs=model_kwargs)
+                model, train_loss,val_losses,test_losses,train_transform,val_transforms,test_transforms = cl.load_downscaling_module(device,model=model, data_module=data_module, architecture=preset, train_loss=loss_function, model_kwargs=model_kwargs)
       
                 if dist.get_rank()==0:
                     print("train_loss",train_loss,"train_transform",train_transform,"val_losses",val_losses,"val_transforms",val_transforms,flush=True)
@@ -381,14 +396,24 @@ def main(device):
     
                     check_fn = lambda submodule: isinstance(submodule, Block)  or isinstance(submodule,Sequential)
     
-                #bfloat16 policy
-                bfloatPolicy = MixedPrecision(
-                    param_dtype=torch.bfloat16,
-                    # Gradient communication precision.
-                    reduce_dtype=torch.bfloat16,
-                    # Buffer precision.
-                    buffer_dtype=torch.bfloat16,
-                )
+                #bfloat32 policy
+                if mp_flag:
+                    #bfloat16 policy
+                    bfloatPolicy = MixedPrecision(
+                        param_dtype=torch.bfloat16,
+                        # Gradient communication precision.
+                        reduce_dtype=torch.bfloat16,
+                        # Buffer precision.
+                        buffer_dtype=torch.bfloat16,
+                    )
+                else:
+                    bfloatPolicy = MixedPrecision(
+                        param_dtype=torch.float32,
+                        # Gradient communication precision.
+                        reduce_dtype=torch.float32,
+                        # Buffer precision.
+                        buffer_dtype=torch.float32,
+                    )
     
                 #fully sharded FSDP
                 model = FSDP(model, device_id = local_rank, process_group= None,sync_module_states=True, sharding_strategy=dist.fsdp.ShardingStrategy.FULL_SHARD,auto_wrap_policy = auto_wrap_policy, mixed_precision=bfloatPolicy, forward_prefetch=True, limit_all_gathers = False)
@@ -529,7 +554,8 @@ def main(device):
     
    
                 if world_rank ==0:    
-                    checkpoint_path = "checkpoints/climate" 
+                    #checkpoint_path = "checkpoints/climate" 
+                    checkpoint_path = f"checkpoints/climate/{loss_function}/{expname}" 
                     # Check whether the specified checkpointing path exists or not
                     isExist = os.path.exists(checkpoint_path)
                     if not isExist:
