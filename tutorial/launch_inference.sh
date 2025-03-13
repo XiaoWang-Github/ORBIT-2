@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=7
 #SBATCH -t 00:05:00
-##SBATCH -q debug
+#SBATCH -q debug
 #SBATCH -o out/inf-%j.out
 #SBATCH -e out/inf-%j.out
 
@@ -16,18 +16,14 @@
 
 #ulimit -n 65536
 
-module load PrgEnv-gnu
-module load rocm/6.2.4
-module unload darshan-runtime
-module unload libfabric
-
-source /lustre/orion/world-shared/lrn036/jyc/frontier/sw/anaconda3/2023.09/etc/profile.d/conda.sh
-eval "$(/lustre/orion/world-shared/lrn036/jyc/frontier/sw/anaconda3/2023.09/bin/conda shell.bash hook)"
-
-conda activate /lustre/orion/lrn036/world-shared/kurihana/super-res-torchlight/flash-attention-rocm6.2.4-tak
-
-module use -a /lustre/orion/world-shared/lrn036/jyc/frontier/sw/modulefiles
 module load libfabric/1.22.0p
+module load PrgEnv-gnu
+module load gcc/12.2.0
+module load rocm/6.2.0
+
+eval "$(/lustre/orion/world-shared/stf218/atsaris/env_test_march/miniconda/bin/conda shell.bash hook)"
+
+conda activate /lustre/orion/lrn036/world-shared/kurihana/super-res-torchlight/flash-attention-torch25-tak_march12
 
 ## DDStore and GPTL Timer
 module use -a /lustre/orion/world-shared/lrn036/jyc/frontier/sw/modulefiles
@@ -37,19 +33,18 @@ module load SR_tools
 lowresdir="/lustre/orion/lrn036/world-shared/kurihana/regridding/dataset/datasets/ERA5-Daymet-1dy-superres/15.0_arcmin"
 highresdir="/lustre/orion/lrn036/world-shared/kurihana/regridding/dataset/datasets/ERA5-Daymet-1dy-superres/3.75_arcmin"
 
-#expname=3174672
-#variable='tmin'
-expname='3178042' #3174672
+epoch=35 #18 
+loss=mse
+# prcp
+expname=3190616 #"3184646" #"3178042" #'3184646' #'3178042' #3174672
 variable='prcp' #'tmin'
 
 # DIR
 basedir="/lustre/orion/cli138/proj-shared/kurihana/super-res-torchlight/tutorial"
-checkpoint_path=${basedir}/checkpoints/climate/imagegradient/${expname}/interm_rank_0_epoch_49.ckpt
-outputdir=${basedir}/checkpoints/climate/imagegradient/${expname}/test
+checkpoint_path=${basedir}/checkpoints/climate/${loss}/${expname}/interm_rank_0_epoch_${epoch}.ckpt
+outputdir=${basedir}/checkpoints/climate/${loss}/${expname}/test
 # YAML
-#config_path="/ccs/home/kurihana/proje-shared_cli138/super-res-torchlight/configs/interm_fine_tune_template.yaml"
-#config_path="/ccs/home/kurihana/proje-shared_cli138/super-res-torchlight/configs/interm_fine_tune_prcp.yaml"
-config_path="/lustre/orion/cli138/proj-shared/kurihana/super-res-torchlight/configs/interm_fine_tune_prcp_scratch.yaml"
+config_path="/lustre/orion/cli138/proj-shared/kurihana/super-res-torchlight/configs/interm_prcp.yaml"
 
 mkdir -p $outputdir
 
@@ -67,7 +62,7 @@ export PYTHONPATH=$PWD/../src:$PYTHONPATH
 export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
 
 
-time srun -n $((SLURM_JOB_NUM_NODES*1)) --export=ALL,LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6 \
+time srun -n $((SLURM_JOB_NUM_NODES*1)) \
 python ./inference_era5_daymet.py \
     --lowresdir ${lowresdir} \
     --highresdir ${highresdir} \

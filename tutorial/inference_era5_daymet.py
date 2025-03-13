@@ -67,6 +67,7 @@ parser.add_argument("--expname", type=int)
 parser.add_argument("--data_key", type=str, default='DAYMET', choices=['DAYMET', 'ERA5_1', 'ERA5_2', 'PRISM'])
 # temporally setting
 parser.add_argument("--config_path", type=str)
+#parser.add_argument("--epoch", default=None)
 args = parser.parse_args()
 
 torch.cuda.set_device(local_rank)

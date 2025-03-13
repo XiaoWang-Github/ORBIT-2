@@ -279,9 +279,11 @@ def main(device):
     
     try:
         mp_flag = conf['model']['bfloat16'] 
+        msg='[AMP Policy] Bfloat16 is applied to AMP policy' if mp_flag else "[AMP Policy] float32 is applied to AMP policy"
+        print(f"Mix Precision status = {mp_flag} {msg}")
     except KeyError:
         mp_flag = True 
-        print('**WARNING* *Mix precesion bfloat16 set ## ON ## in default. Please turn it off if needed')
+        print('**WARNING* *Mix precesion bfloat16 set ## ON ## in default. Please turn it off if needed', flush=True)
     
 
     if world_rank==0:
