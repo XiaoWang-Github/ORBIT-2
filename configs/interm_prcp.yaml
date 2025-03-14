@@ -1,9 +1,9 @@
 #-----------   TRAINER -------------
 trainer:
-  max_epochs: 25 # ~25 for bfloat16 ~60 for bfloat32 
-  checkpoint:
+  max_epochs: 40 # ~25 for bfloat16 ~60 for bfloat32 
+  checkpoint: "/lustre/orion/cli138/proj-shared/kurihana/super-res-torchlight/tutorial/checkpoints/climate/mse/3190616/interm_rank_0_epoch_18.ckpt"
   pretrain:
-  batch_size: 64
+  batch_size: 32 #64
   buffer_size: 400
   num_workers: 2
 
@@ -29,7 +29,7 @@ model:
   drop_path: 0.1
   drop_rate: 0.1
   train_loss: 'mse'
-  mp_flag: True # True for first X epochs and turn it off False in later epochs
+  bfloat16: False #True # True for first X epochs and turn it off False in later epochs
 
 # ---------------------------- DATA -------------------------------------------
 data:
