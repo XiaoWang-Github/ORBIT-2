@@ -234,7 +234,7 @@ cl.utils.inference.test_on_many_images(
     src="era5",
     outputdir=args.outputdir,
     device=device,
-    index=0
+    index=-1
 )
 
 dist.destroy_process_group()

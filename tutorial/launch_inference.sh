@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=7
-#SBATCH -t 00:05:00
+#SBATCH -t 00:06:00
 #SBATCH -q debug
 #SBATCH -o out/inf-%j.out
 #SBATCH -e out/inf-%j.out

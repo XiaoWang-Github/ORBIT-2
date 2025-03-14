@@ -31,7 +31,7 @@ def prcp_special(truths, preds, vmin, vmax, varname='prcp', index=0):
     plt.close()
 
 
-epoch=18
+epoch=35
 loss='mse'
 varname='prcp'
 expname="3190616"
