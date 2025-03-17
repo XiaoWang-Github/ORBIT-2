@@ -30,6 +30,11 @@ class Patchify(torch.nn.Module):
             if self.grad_deg == 1:
                 grad = np.gradient(np.squeeze(img))
                 grad_out = np.sqrt(grad[0]**2 + grad[1]**2)
+                ind = np.unravel_index(np.argsort(grad_out, axis=None), grad_out.shape)
+                edges = np.zeros((img.shape[0],img.shape[1]), dtype=np.uint8)
+                topK = int(img.shape[0]*img.shape[1]*self.edge_percentage)
+                for i in range(img.shape[0]*img.shape[1]-topK, img.shape[0]*img.shape[1]):
+                    edges[ind[0][i],ind[1][i]] = 255
             else:
                 grad = np.gradient(np.squeeze(img))
                 grad_mag = np.sqrt(grad[0]**2 + grad[1]**2)
@@ -37,12 +42,9 @@ class Patchify(torch.nn.Module):
                 grad_y = np.gradient(grad[1]/grad_mag, axis=1)
                 grad_out = grad_x + grad_y
 
-            ind = np.unravel_index(np.argsort(grad_out, axis=None), grad_out.shape)
-            edges = np.zeros((img.shape[0],img.shape[1]), dtype=np.uint8)
-            topK = int(img.shape[0]*img.shape[1]*(self.edge_percentage-self.edge_percentage*.5))
-            for i in range(img.shape[0]*img.shape[1]-topK, img.shape[0]*img.shape[1]):
-                edges[ind[0][i],ind[1][i]] = 255
-            for i in range(topK):
+                for i in range(topK):
+                    edges[ind[0][i],ind[1][i]] = 255
+                
         else:
             if self.smooth_factor ==0 :
                 edges = np.random.uniform(low=0,high=1,size=(img.shape[0],img.shape[1]))

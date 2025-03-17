@@ -14,7 +14,7 @@ import numpy as np
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed_on_the_fly, interpolate_pos_embed_on_the_fly_adaptive
 from climate_learn.models.hub.components.patch_embed import PatchEmbed 
 
-from .components.adaptive_patching import Patchify,
+from .components.adaptive_patching import Patchify
 
 @register("res_slimvit")
 class Res_Slim_ViT(nn.Module):
@@ -44,6 +44,7 @@ class Res_Slim_ViT(nn.Module):
         physics=False,
         edge_percentage=.1,
         grad_deg=1,
+        data_type="bfloat16"
     ):
         super().__init__()
         self.default_vars = default_vars
@@ -69,6 +70,7 @@ class Res_Slim_ViT(nn.Module):
         self.physics = physics
         self.edge_percentage = edge_percentage
         self.grad_deg = grad_deg
+        self.data_type = data_type
         
         self.token_embeds = nn.ModuleList(
             [PatchEmbed(img_size, patch_size, 1, embed_dim) for i in range(len(default_vars))]
@@ -160,7 +162,7 @@ class Res_Slim_ViT(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
 
-    def data_config(self, res, img_size, in_channels, out_channels):
+    def data_config(self, res, img_size, in_channels, out_channels, fixed_length):
         with torch.no_grad(): 
             orig_size = self.img_size
 
@@ -254,9 +256,12 @@ class Res_Slim_ViT(nn.Module):
 
         x_list = []
         for i in range(B):
-            x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.bfloat16).to(x.device))
-            #switch out this line for line above to visualize
-            #x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.float32).to(x.device))
+            if self.data_type == "bfloat16":
+                x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.bfloat16).to(x.device))
+                #switch out this line for line above to visualize
+                #x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.float32).to(x.device))
+            else:
+                x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.float32).to(x.device))
 
         x = torch.stack([torch.moveaxis(x_list[i],-1,0) for i in range(len(x_list))])
         return x
@@ -316,9 +321,12 @@ class Res_Slim_ViT(nn.Module):
                 seq_img, qdt = self.patchify(x_np)
                 seq_img_list.append(seq_img)
                 qdt_list.append(qdt)
-            x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.bfloat16).to(x.device)
-            #switch out this line for line above to visualize
-            #x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.float32).to(x.device)
+            if self.data_type == "bfloat16":
+                x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.bfloat16).to(x.device)
+                #switch out this line for line above to visualize
+                #x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.float32).to(x.device)
+            else:
+                x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.float32).to(x.device)
             # x.shape = [B,fixed_length,patch_size*patch_size]
 
             x = self.to_emb(x)
@@ -366,7 +374,7 @@ class Res_Slim_ViT(nn.Module):
 
         path2_result = self.residual_connection(x,out_var_index)     
 
-        x = self.forward_encoder(x, in_variables)
+        x,qdt_list = self.forward_encoder(x, in_variables)
 
         # x.shape = [B,num_patches,embed_dim] or x.shape = [B,fixed_length,embed_dim]
 

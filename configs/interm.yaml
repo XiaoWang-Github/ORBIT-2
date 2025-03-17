@@ -6,7 +6,7 @@ trainer:
   batch_size: 32
   buffer_size: 400
   num_workers: 2
-  data_type: bfloat16
+  data_type: "bfloat16"
   train_loss: "mse"
   
 # ---------------------------- MODEL -------------------------------------------
@@ -33,8 +33,8 @@ model:
   fixed_length: {
 #    'ERA5_1': 127,
 #    'ERA5_2': 1012,
-    'PRISM': 4051,
-#    'DAYMET_1': 4051,
+#    'PRISM': 4051,
+    'DAYMET_1': 4051,
 #    'DAYMET_2': 4051,
   }
   smooth: [1,3,5]
