@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH -A lrn036
 #SBATCH -J flash
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 #SBATCH --gres=gpu:8
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
-#SBATCH -t 01:00:00
+#SBATCH -t 00:15:00
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.out
 
@@ -45,12 +45,25 @@ export PYTHONPATH=$PWD/../src:$PYTHONPATH
 export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
 
 time srun -n $((SLURM_JOB_NUM_NODES*8)) --export=ALL,LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6 \
-python ./intermediate_downscaling.py ../configs/experiments/era5_127.yaml
-#python ./intermediate_downscaling.py ../configs/experiments/era5_34.yaml
-#python ./intermediate_downscaling.py ../configs/interm.yaml
+python ./intermediate_downscaling.py ../configs/experiments/prism_temp_phys.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/era5_2_temp_normal.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/prism_temp_1012.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/era5_2_prcp_normal.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/era5_2_temp_1012.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/era5_2_prcp_1012.yaml
 
-#time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-#python ./intermediate_downscaling.py ../configs/era5_era5.yaml
-#time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-#python ./intermediate_downscaling.py ../configs/prism_prism.yaml
+
+#PRISM
+#python ./intermediate_downscaling.py ../configs/experiments/prism_temp_normal.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/prism_temp_1012.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/prism_prcp_normal.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/prism_prcp_1012.yaml
+
+
+#era5_1
+#python ./intermediate_downscaling.py ../configs/experiments/era5_1_prcp_127.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/era5_1_prcp_normal.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/era5_1_temp_127.yaml
+#python ./intermediate_downscaling.py ../configs/experiments/era5_1_temp_normal.yaml
+
 

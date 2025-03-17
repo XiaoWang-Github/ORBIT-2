@@ -270,20 +270,38 @@ def main(device):
     drop_path = conf['model']['drop_path']
     drop_rate = conf['model']['drop_rate']
     adaptive_patching = conf['model']['adaptive_patching']
+    on_gpu = conf['model']['on_gpu']
     if adaptive_patching:
         fixed_length = conf['model']['fixed_length']
         data_key = list(fixed_length.keys())[0]
+
+        physics = conf['model']['physics']
+        if physics:
+            edge_percentage = conf['model']['edge_percentage']
+            grad_deg = conf['model']['grad_deg']
+        else:
+            edge_percentage = None
+            grad_deg = None
+        smooth = conf['model']['smooth']
+        canny = conf['model']['canny']
+        canny_add = conf['model']['canny_add']
     else:
         fixed_length = None
+        smooth = None
+        canny = None
+        canny_add = None
+        edge_percentage = None
+        grad_deg = None
+        on_gpu = None
 
     if world_rank==0:
-        print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,"adaptive_patching",adaptive_patching,"fixed_length",fixed_length,flush=True)
+        print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,"adaptive_patching",adaptive_patching,"fixed_length",fixed_length,"smooth",smooth,"canny",canny,"canny_add",canny_add,"physics",physics,"edge_percentage",edge_percentage,'grad_deg',grad_deg,'on_gpu',on_gpu,flush=True)
 
 
     if adaptive_patching:
-        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key]}
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key],'smooth':smooth,'canny':canny,'canny_add':canny_add,'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg,'on_gpu':on_gpu}
     else:
-        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length}
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length,'smooth':smooth,'canny':canny,'canny_add':canny_add,'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg,'on_gpu':on_gpu}
 
 
     if world_rank==0:
@@ -413,9 +431,9 @@ def main(device):
     
             with FSDP.summon_full_params(model):
                 if adaptive_patching:
-                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length[data_key])
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length[data_key], on_gpu)
                 else:
-                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length)
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length, on_gpu)
             
     
     
@@ -464,7 +482,10 @@ def main(device):
                     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
                     epoch_start = checkpoint['epoch']+1
+                    loss_list = checkpoint['loss_list']
                     del checkpoint
+                else:
+                    loss_list = []
     
             #get latitude and longitude
             lat, lon = data_module.get_lat_lon()
@@ -537,12 +558,12 @@ def main(device):
                 scheduler.step()
                 #timer.end("epoch")
         
+                loss_list.append(epoch_loss)
                 if world_rank==0:
                     print("epoch: ",epoch," epoch_loss ",epoch_loss,flush=True)
     
    
                 if world_rank ==0:    
-                    #checkpoint_path = "checkpoints/climate_PRISM" 
                     checkpoint_path = "checkpoints/"+checkpoint_folder
                     # Check whether the specified checkpointing path exists or not
                     isExist = os.path.exists(checkpoint_path)
@@ -566,6 +587,7 @@ def main(device):
                         'model_state_dict': model_states,
                         'optimizer_state_dict': optimizer_states,
                         'scheduler_state_dict': scheduler_states,
+                        'loss_list' : loss_list,
                         }, checkpoint_path+"/"+"interm"+"_rank_"+str(world_rank)+"_epoch_"+ str(epoch) +".ckpt")
              
                 print("rank",world_rank,"After torch.save torch.cuda.memory_reserved: %fGB"%(torch.cuda.memory_reserved(device)/1024/1024/1024),flush=True)

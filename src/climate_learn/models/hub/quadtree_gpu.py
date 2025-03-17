@@ -2,6 +2,52 @@ import numpy as np
 import torch
 import cv2 as cv
 from matplotlib import pyplot as plt
+from torchvision.transforms import Resize
+from torchvision.transforms import InterpolationMode
+
+import torchvision.transforms.functional as F
+
+def resize_with_pad(img, target_size, padding_mode='constant', fill=0):
+    """
+    Resizes an image to the target size, maintaining aspect ratio and padding if needed.
+
+    Args:
+        img (PIL Image or Tensor): The image to resize.
+        target_size (tuple): The desired output size (height, width).
+        padding_mode (str, optional): Type of padding. See torch.nn.functional.pad for options. Defaults to 'constant'.
+        fill (int or tuple, optional): Pixel fill value for constant padding. Defaults to 0.
+
+    Returns:
+        Tensor: The resized and padded image as a Tensor.
+    """
+    img_width, img_height = F.get_image_size(img)
+    target_height, target_width = target_size
+
+    # Calculate aspect ratios
+    img_ratio = img_width / img_height
+    target_ratio = target_width / target_height
+
+    # Determine resize dimensions based on aspect ratios
+    if img_ratio > target_ratio:
+        new_width = target_width
+        new_height = int(target_width / img_ratio)
+    else:
+        new_height = target_height
+        new_width = int(target_height * img_ratio)
+
+    # Resize the image
+    resized_img = F.resize(img, (new_height, new_width))
+
+    # Calculate padding values
+    padding_left = (target_width - new_width) // 2
+    padding_top = (target_height - new_height) // 2
+    padding_right = target_width - new_width - padding_left
+    padding_bottom = target_height - new_height - padding_top
+
+    # Pad the image
+    padded_img = F.pad(resized_img, (padding_left, padding_top, padding_right, padding_bottom), mode=padding_mode, value=fill)
+
+    return padded_img
 
 class Rect:
     def __init__(self, x1, x2, y1, y2) -> None:
@@ -17,7 +63,8 @@ class Rect:
     
     def contains(self, domain):
         patch = domain[self.y1:self.y2, self.x1:self.x2]
-        return int(np.sum(patch)/255)
+        #return int(np.sum(patch)/255)
+        return int(torch.sum(patch)/255)
     
     def get_area(self, img):
         return img[self.y1:self.y2, self.x1:self.x2, :]
@@ -26,15 +73,31 @@ class Rect:
         # import pdb
         # pdb.set_trace()
         patch_size = self.get_size()
+        #print("ps", patch_size)
         # patch = np.resize(patch, patch_size)
-        patch = patch.astype('float32')
-        patch = cv.resize(patch, interpolation=cv.INTER_CUBIC , dsize=patch_size)
+        #patch = patch.astype('float32')
+        patch = patch.to(torch.float32)
+        #patch = cv.resize(patch, interpolation=cv.INTER_CUBIC , dsize=patch_size)
         #patch = cv.resize(patch, interpolation=cv.INTER_LINEAR , dsize=patch_size)
-        if num_channels <= 1:
-            patch = np.expand_dims(patch, axis=-1)
+        #RESIZE = Resize(patch_size, interpolation=InterpolationMode.BICUBIC)
+        RESIZE = Resize(patch_size, interpolation=InterpolationMode.BILINEAR)
+        ##print("pred_mask", patch.shape)
+        patch = RESIZE(torch.unsqueeze(torch.moveaxis(patch,-1,0),0))
+        #patch = F.resize(torch.squeeze(patch), patch_size)
+        #if num_channels <= 1:
+        #    patch = np.expand_dims(patch, axis=-1)
+        patch = torch.squeeze(patch, dim=0)
+        patch = torch.moveaxis(patch,0,-1)
+        patch = torch.transpose(patch,0,1)
+        #if num_channels <= 1:
+        #else:
+        #    patch = torch.moveaxis(torch.squeeze(patch),0, -1)
+        #    patch = torch.transpose(patch,0,1)
+        #print("patch_size2", patch.shape)
         # import pdb
         # pdb.set_trace()
         mask[self.y1:self.y2, self.x1:self.x2, :] = patch
+        #mask[self.x1:self.x2, self.y1:self.y2, :] = patch
         return mask
     
     def get_coord(self):
@@ -150,40 +213,69 @@ class FixedQuadTree:
         seq_size = []
         seq_pos = []
         for bbox,value in self.nodes:
+            #seq_patch.append(torch.moveaxis(bbox.get_area(img),-1,0))
             seq_patch.append(bbox.get_area(img))
             seq_size.append(bbox.get_size()[0])
             seq_pos.append(bbox.get_center())
             
         h2,w2,c2 = size
+
+        #seq_patch = torch.stack([seq_patch[k] for k in range(len(seq_patch))])
+        #print("seq_patch_before", seq_patch.shape)
+        #RESIZE = Resize((h2,w2), interpolation=InterpolationMode.BICUBIC)
+        #seq_patch = RESIZE(seq_patch)
+        #print("seq_patch_after", seq_patch.shape)
+        
         
         for i in range(len(seq_patch)):
             h1, w1, c1 = seq_patch[i].shape
             #assert h1==w1, "Need squared input."
-            seq_patch[i] = cv.resize(seq_patch[i], (h2, w2), interpolation=cv.INTER_CUBIC)
+            #seq_patch[i] = cv.resize(seq_patch[i], (h2, w2), interpolation=cv.INTER_CUBIC)
             #seq_patch[i] = cv.resize(seq_patch[i], (h2, w2), interpolation=cv.INTER_LINEAR)
+            seq_patch[i] = torch.unsqueeze(torch.moveaxis(seq_patch[i],-1,0),0)
+            #print("seq_patch[i]_size", seq_patch[i].shape)
+            #RESIZE = Resize((h2,w2), interpolation=InterpolationMode.BICUBIC)
+            RESIZE = Resize((h2,w2), interpolation=InterpolationMode.BILINEAR)
+            seq_patch[i] = torch.squeeze(RESIZE(seq_patch[i]))
+            #seq_patch[i] = F.resize(seq_patch[i],(h2,w2))
+            #print("seq_patch[i]_size", seq_patch[i].shape)
             ## assert seq_patch[i].shape == (h2,w2,c2), "Wrong shape {} get, need {}".format(seq_patch[i].shape, (h2,w2,c2))
+        #print("LEN_SEQ_PATCH_BEFORE", len(seq_patch),flush=True)
         if len(seq_patch)<self.fixed_length:
             # import pdb
             # pdb.set_trace()
             if c2 > 1:
                 seq_patch += [np.zeros(shape=(h2,w2,c2))] * (self.fixed_length-len(seq_patch))
             else:
-                seq_patch += [np.zeros(shape=(h2,w2))] * (self.fixed_length-len(seq_patch))
-            seq_size += [0]*(self.fixed_length-len(seq_size))
-            seq_pos += [tuple([-1,-1])]*(self.fixed_length-len(seq_pos))
+                #seq_patch += [np.zeros(shape=(h2,w2))] * (self.fixed_length-len(seq_patch))
+                #seq_patch.append(torch.zeros(size=(h2,w2), dtype=torch.bfloat16))
+                for j in range(self.fixed_length-len(seq_patch)):
+                    seq_patch.append(torch.zeros(size=(h2,w2), dtype=torch.float32,device=img.device))
+
+            #seq_size += [0]*(self.fixed_length-len(seq_size))
+            #seq_pos += [tuple([-1,-1])]*(self.fixed_length-len(seq_pos))
         elif len(seq_patch)>self.fixed_length:
             pass
             # random_drop
-        assert len(seq_patch)==self.fixed_length, "Not equal fixed legnth."
-        assert len(seq_size)==self.fixed_length, "Not equal fixed legnth."
-        return seq_patch, seq_size, seq_pos
+        #print("LEN_SEQ_PATCH_0", seq_patch[0].shape,flush=True)
+        #print("LEN_SEQ_PATCH_1", seq_patch[1].shape,flush=True)
+        #print("LEN_SEQ_PATCH_2", seq_patch[2].shape,flush=True)
+        #print("LEN_SEQ_PATCH_3", seq_patch[3].shape,flush=True)
+        #print("LEN_SEQ_PATCH_4", seq_patch[4].shape,flush=True)
+        #assert len(seq_patch)==self.fixed_length, "Not equal fixed legnth."
+        #assert len(seq_size)==self.fixed_length, "Not equal fixed legnth."
+        #return seq_patch, seq_size, seq_pos
+        return seq_patch
     
     def deserialize(self, seq, patch_size, channel):
 
         H,W = self.domain.shape
-        seq = np.reshape(seq, (self.fixed_length, patch_size, patch_size, channel))
-        seq = seq.astype(int)
-        mask = np.zeros(shape=(H, W, channel))
+        #seq = np.reshape(seq, (self.fixed_length, patch_size, patch_size, channel))
+        #seq = seq.astype(int)
+        #mask = np.zeros(shape=(H, W, channel))
+        seq = torch.reshape(seq, (self.fixed_length, patch_size, patch_size, channel)).to(torch.int)
+        #seq = seq.astype(int)
+        mask = torch.zeros(size=(H, W, channel)).to(seq.device)
         #print("demask:", mask.shape)
         
         # mask = np.expand_dims(mask, axis=-1)

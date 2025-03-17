@@ -13,7 +13,6 @@ from functools import lru_cache
 import numpy as np
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed_on_the_fly, interpolate_pos_embed_on_the_fly_adaptive
 from climate_learn.models.hub.components.patch_embed import PatchEmbed 
-from .adaptive_patching import Patchify, QDT
 
 @register("res_slimvit")
 class Res_Slim_ViT(nn.Module):
@@ -37,6 +36,14 @@ class Res_Slim_ViT(nn.Module):
         mlp_ratio=4.0,
         adaptive_patching=False,
         fixed_length=1024,
+        smooth=[1,3,5],
+        canny=[50,100],
+        canny_add=50,
+        physics=False,
+        edge_percentage=.1,
+        grad_deg=1,
+        on_gpu = False,
+        
     ):
         super().__init__()
         self.default_vars = default_vars
@@ -53,6 +60,18 @@ class Res_Slim_ViT(nn.Module):
         self.embed_dim = embed_dim
         self.adaptive_patching = adaptive_patching
         self.fixed_length = fixed_length
+        self.smooth = smooth
+        self.canny = canny
+        self.canny_add = canny_add
+        self.physics = physics
+        self.on_gpu = on_gpu
+        if on_gpu:
+            from .adaptive_patching_gpu import Patchify, QDT
+        else:
+            from .adaptive_patching import Patchify, QDT
+            
+        self.edge_percentage = edge_percentage
+        self.grad_deg = grad_deg
         self.spatial_resolution = 0
         self.spatial_embed = nn.Linear(1, embed_dim)
 
@@ -62,7 +81,7 @@ class Res_Slim_ViT(nn.Module):
 
         if self.adaptive_patching:
             self.num_patches = fixed_length
-            self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1)
+            self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1, sths=smooth, cannys=canny, canny_add=canny_add, physics=physics, edge_percentage=edge_percentage, grad_deg=grad_deg)
             self.to_img = nn.Linear(embed_dim,patch_size**2)
             self.to_emb = nn.Linear(patch_size**2,embed_dim)
             self.magnify = nn.Linear(self.out_channels*patch_size**2, self.out_channels*(patch_size*superres_mag)**2)
@@ -109,7 +128,7 @@ class Res_Slim_ViT(nn.Module):
 
         #skip connection path
         self.path2 = nn.ModuleList()
-        self.path2.append(nn.Conv2d(in_channels=out_channels, out_channels=cnn_ratio*superres_mag*superres_mag, kernel_size=(3, 3), stride=1, padding=1)) 
+        self.path2.append(nn.Conv2d(in_channels=(out_channels+4), out_channels=cnn_ratio*superres_mag*superres_mag, kernel_size=(3, 3), stride=1, padding=1)) 
         self.path2.append(nn.GELU())
         self.path2.append(nn.PixelShuffle(superres_mag))
         self.path2.append(nn.Conv2d(in_channels=cnn_ratio, out_channels=out_channels, kernel_size=(3, 3), stride=1, padding=1)) 
@@ -119,10 +138,9 @@ class Res_Slim_ViT(nn.Module):
         for _ in range(decoder_depth):
             self.head.append(nn.Linear(embed_dim, embed_dim))
             self.head.append(nn.GELU())
-        #Variations
         self.head.append(nn.Linear(embed_dim,out_channels * (superres_mag*patch_size)**2))
-        #self.head.append(nn.Linear(embed_dim,out_channels * patch_size**2))
         self.head = nn.Sequential(*self.head)
+        self.conv_out = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=(3, 3), stride=1, padding=1)
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -149,7 +167,12 @@ class Res_Slim_ViT(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
 
-    def data_config(self, res, img_size, in_channels, out_channels, fixed_length):
+    def data_config(self, res, img_size, in_channels, out_channels, fixed_length, on_gpu):
+        if on_gpu:
+            from .adaptive_patching_gpu import Patchify, QDT
+        else:
+            from .adaptive_patching import Patchify, QDT
+    
         with torch.no_grad(): 
             orig_size = self.img_size
 
@@ -159,7 +182,9 @@ class Res_Slim_ViT(nn.Module):
             self.out_channels = out_channels
             if self.adaptive_patching:
                 self.num_patches = fixed_length
-                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1)
+                #self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1)
+                #self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1, sths=self.smooth, cannys=self.canny, canny_add=self.canny_add)
+                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1, sths=self.smooth, cannys=self.canny, canny_add=self.canny_add, physics=self.physics, edge_percentage=self.edge_percentage, grad_deg=self.grad_deg)
             else:
                 self.num_patches = img_size[0] * img_size[1]// (self.patch_size **2)
        
@@ -243,8 +268,12 @@ class Res_Slim_ViT(nn.Module):
 
         x_list = []
         for i in range(B):
-            x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.bfloat16).to(x.device))
-            #x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.float32).to(x.device))
+            if self.on_gpu:
+                x_list.append(qdt_list[i].deserialize(torch.unsqueeze(x[i], dim=-1), self.patch_size*scaling, out_channels).to(torch.bfloat16))
+                #x_list.append(qdt_list[i].deserialize(torch.unsqueeze(x[i], dim=-1), self.patch_size*scaling, out_channels).to(torch.float32))
+            else:
+                x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.bfloat16).to(x.device))
+                #x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.float32).to(x.device))
 
         x = torch.stack([torch.moveaxis(x_list[i],-1,0) for i in range(len(x_list))])
         return x
@@ -297,12 +326,18 @@ class Res_Slim_ViT(nn.Module):
             seq_img_list = []
             qdt_list = []
             for i in range(B):
-                x_np = np.moveaxis(x[i].to(torch.float32).detach().cpu().numpy(), 0, -1)
-                seq_img, qdt = self.patchify(x_np)
+                if self.on_gpu:
+                    seq_img, qdt = self.patchify(torch.moveaxis(x[i], 0, -1))
+                else:
+                    x_np = np.moveaxis(x[i].to(torch.float32).detach().cpu().numpy(), 0, -1)
+                    seq_img, qdt = self.patchify(x_np)
                 seq_img_list.append(seq_img)
                 qdt_list.append(qdt)
-            x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.bfloat16).to(x.device)
-            #x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.float32).to(x.device)
+            if self.on_gpu:
+                x = torch.stack([seq_img_list[k] for k in range(len(seq_img_list))])
+            else:
+                x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.bfloat16).to(x.device)
+                #x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.float32).to(x.device)
             # x.shape = [B,fixed_length,patch_size*patch_size]
 
             x = self.to_emb(x)
@@ -334,7 +369,12 @@ class Res_Slim_ViT(nn.Module):
 
     
     def find_var_index(self,in_variables,out_variables):
-        return [in_variables.index(variable) for variable in out_variables] 
+        temp_index= [in_variables.index(variable) for variable in out_variables]
+        temp_index.append(in_variables.index("land_sea_mask"))
+        temp_index.append(in_variables.index("orography"))
+        temp_index.append(in_variables.index("lattitude"))
+        temp_index.append(in_variables.index("landcover"))
+        return temp_index
 
 
 
@@ -370,6 +410,8 @@ class Res_Slim_ViT(nn.Module):
             # x.shape = [B,num_patches,out_channels*patch_size*patch_size]
             x = self.unpatchify(x,scaling=self.superres_mag, out_channels=self.out_channels)
             # x.shape = [B,out_channels,h*patch_size, w*patch_size]
+
+        x = self.conv_out(x)
 
 
         if path2_result.size(dim=2) !=x.size(dim=2) or path2_result.size(dim=3) !=x.size(dim=3):
