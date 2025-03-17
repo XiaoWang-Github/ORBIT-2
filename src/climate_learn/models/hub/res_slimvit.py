@@ -11,8 +11,10 @@ from .components.attention import VariableMapping_Attention
 from einops import rearrange
 from functools import lru_cache
 import numpy as np
-from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed_on_the_fly
+from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed_on_the_fly, interpolate_pos_embed_on_the_fly_adaptive
 from climate_learn.models.hub.components.patch_embed import PatchEmbed 
+
+from .components.adaptive_patching import Patchify,
 
 @register("res_slimvit")
 class Res_Slim_ViT(nn.Module):
@@ -34,6 +36,14 @@ class Res_Slim_ViT(nn.Module):
         decoder_depth=8,
         num_heads=16,
         mlp_ratio=4.0,
+        adaptive_patching=False,
+        fixed_length=1024,
+        smooth=[1,3,5],
+        canny=[50,100],
+        canny_add=50,
+        physics=False,
+        edge_percentage=.1,
+        grad_deg=1,
     ):
         super().__init__()
         self.default_vars = default_vars
@@ -50,11 +60,27 @@ class Res_Slim_ViT(nn.Module):
         self.embed_dim = embed_dim
         self.spatial_resolution = 0
         self.spatial_embed = nn.Linear(1, embed_dim)
+
+        self.adaptive_patching = adaptive_patching
+        self.fixed_length = fixed_length
+        self.smooth = smooth
+        self.canny = canny
+        self.canny_add = canny_add
+        self.physics = physics
+        self.edge_percentage = edge_percentage
+        self.grad_deg = grad_deg
         
         self.token_embeds = nn.ModuleList(
             [PatchEmbed(img_size, patch_size, 1, embed_dim) for i in range(len(default_vars))]
         )
-        self.num_patches = self.token_embeds[0].num_patches
+        if self.adaptive_patching:
+            self.num_patches = fixed_length
+            self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1, sths=smooth, cannys=canny, canny_add=canny_add, physics=physics, edge_percentage=edge_percentage, grad_deg=grad_deg)
+            self.to_img = nn.Linear(embed_dim,patch_size**2)
+            self.to_emb = nn.Linear(patch_size**2,embed_dim)
+            self.magnify = nn.Linear(self.out_channels*patch_size**2, self.out_channels*(patch_size*superres_mag)**2)
+        else:
+            self.num_patches = self.token_embeds[0].num_patches
 
         # variable embedding to denote which variable each token belongs to
         # helps in aggregating variables
@@ -67,9 +93,14 @@ class Res_Slim_ViT(nn.Module):
         #self.var_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
         self.var_agg = VariableMapping_Attention(embed_dim, fused_attn=False, num_heads=num_heads, qkv_bias=False)
         
-        self.pos_embed = nn.Parameter(
-            torch.zeros(1, self.num_patches, embed_dim), requires_grad=learn_pos_emb
-        )
+        if self.adaptive_patching:
+            self.pos_embed = nn.Parameter(torch.randn(1, self.num_patches, embed_dim) * .02, requires_grad=learn_pos_emb
+            )
+        else:
+            self.pos_embed = nn.Parameter(
+                torch.zeros(1, self.num_patches, embed_dim), requires_grad=learn_pos_emb
+            )
+
         self.pos_drop = nn.Dropout(p=drop_rate)
         dpr = [x.item() for x in torch.linspace(0, drop_path, depth)]
         self.blocks = nn.ModuleList(
@@ -109,17 +140,15 @@ class Res_Slim_ViT(nn.Module):
         self.initialize_weights()
 
     def initialize_weights(self):
-        pos_embed = get_2d_sincos_pos_embed(
-            self.pos_embed.shape[-1],
-            self.img_size[0] // self.patch_size,
-            self.img_size[1] // self.patch_size,
-            cls_token=False,
-        )
-        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+        if not self.adaptive_patching:
+            pos_embed = get_2d_sincos_pos_embed(
+                self.pos_embed.shape[-1],
+                self.img_size[0] // self.patch_size,
+                self.img_size[1] // self.patch_size,
+                cls_token=False,
+            )
+            self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
         self.apply(self._init_weights)
-
-
-
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -139,7 +168,11 @@ class Res_Slim_ViT(nn.Module):
             self.img_size = img_size
             self.in_channels = in_channels
             self.out_channels = out_channels
-            self.num_patches = img_size[0] * img_size[1]// (self.patch_size **2)
+            if self.adaptive_patching:
+                self.num_patches = fixed_length
+                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1, sths=self.smooth, cannys=self.canny, canny_add=self.canny_add, physics=self.physics, edge_percentage=self.edge_percentage, grad_deg=self.grad_deg)
+            else:
+                self.num_patches = img_size[0] * img_size[1]// (self.patch_size **2)
        
  
         if torch.distributed.get_rank()==0:
@@ -214,6 +247,20 @@ class Res_Slim_ViT(nn.Module):
 
         return x
 
+    def deserialize(self, x: torch.Tensor, qdt_list, out_channels=1, scaling=1):
+        B = x.shape[0]
+        #c = self.out_channels
+
+
+        x_list = []
+        for i in range(B):
+            x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.bfloat16).to(x.device))
+            #switch out this line for line above to visualize
+            #x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.float32).to(x.device))
+
+        x = torch.stack([torch.moveaxis(x_list[i],-1,0) for i in range(len(x_list))])
+        return x
+
 
     def residual_connection(self,x:torch.Tensor,out_var_index):
         """
@@ -254,8 +301,32 @@ class Res_Slim_ViT(nn.Module):
         #if torch.distributed.get_rank()==0:
         #    print("after patch_embed x.shape",x.shape,flush=True)
 
+        if self.adaptive_patching:
+            #Feature Space to Image Space
+            x = self.to_img(x)
+            # x.shape = [B,num_patches,patch_size*patch_size]
+            x = self.unpatchify(x,scaling=1)
+            # x.shape = [B,out_channels,h*patch_size, w*patch_size]
 
-        pos_emb = interpolate_pos_embed_on_the_fly(self.pos_embed,self.patch_size,self.img_size)
+            B = x.shape[0]
+            seq_img_list = []
+            qdt_list = []
+            for i in range(B):
+                x_np = np.moveaxis(x[i].to(torch.float32).detach().cpu().numpy(), 0, -1)
+                seq_img, qdt = self.patchify(x_np)
+                seq_img_list.append(seq_img)
+                qdt_list.append(qdt)
+            x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.bfloat16).to(x.device)
+            #switch out this line for line above to visualize
+            #x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.float32).to(x.device)
+            # x.shape = [B,fixed_length,patch_size*patch_size]
+
+            x = self.to_emb(x)
+            # x.shape = [B,fixed_length,embed_dim]
+            pos_emb = interpolate_pos_embed_on_the_fly_adaptive(self.pos_embed,self.num_patches)
+        else:
+            qdt_list = None
+            pos_emb = interpolate_pos_embed_on_the_fly(self.pos_embed,self.patch_size,self.img_size)
 
 
         x = x + pos_emb
@@ -273,7 +344,7 @@ class Res_Slim_ViT(nn.Module):
             x = blk(x)
         # x.shape = [B,num_patches,embed_dim]
         x = self.norm(x)
-        return x
+        return x,qdt_list
 
     
     def find_var_index(self,in_variables,out_variables):
@@ -297,13 +368,27 @@ class Res_Slim_ViT(nn.Module):
 
         x = self.forward_encoder(x, in_variables)
 
-        # x.shape = [B,num_patches,embed_dim]
+        # x.shape = [B,num_patches,embed_dim] or x.shape = [B,fixed_length,embed_dim]
 
         #decoder
         x = self.head(x) 
-        # x.shape = [B,num_patches,out_channels*patch_size*patch_size]
-        x = self.unpatchify(x,scaling=self.superres_mag, out_channels=self.out_channels)
-        # x.shape = [B,out_channels,h*patch_size, w*patch_size]
+        if self.adaptive_patching:
+            # x.shape = [B,fixed_length,out_channels*patch_size*patch_size]
+            x = self.deserialize(x, qdt_list, out_channels=self.out_channels, scaling=self.superres_mag)
+            #x = self.deserialize(x, qdt_list, out_channels=self.out_channels, scaling=1)
+            # x.shape = [B,out_channels,h, w]
+            x = x.reshape(shape=(x.shape[0], self.out_channels, self.img_size[0] // self.patch_size, self.img_size[1] // self.patch_size, self.patch_size, self.patch_size))
+            x = torch.einsum("nchwpq->nhwpqc", x)
+            x = x.reshape(shape=(x.shape[0], self.img_size[0] // self.patch_size, self.img_size[1] // self.patch_size, self.patch_size*self.patch_size*self.out_channels))
+            # x.shape = [B,num_patches,out_channels*(patch_size)**2]
+            x = self.magnify(x)
+            # x.shape = [B,num_patches,out_channels*(patch_size*mag)**2]
+            x = self.unpatchify(x,scaling=self.superres_mag, out_channels=self.out_channels)
+            # x.shape = [B,out_channels,h*patch_size, w*patch_size]
+        else:
+            # x.shape = [B,num_patches,out_channels*patch_size*patch_size]
+            x = self.unpatchify(x,scaling=self.superres_mag, out_channels=self.out_channels)
+            # x.shape = [B,out_channels,h*patch_size, w*patch_size]
         x = self.conv_out(x) 
  
         if path2_result.size(dim=2) !=x.size(dim=2) or path2_result.size(dim=3) !=x.size(dim=3):

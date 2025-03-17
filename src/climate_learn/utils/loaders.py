@@ -254,7 +254,7 @@ load_downscaling_module = partial(
 )
 
 
-def load_architecture(task, data_module, architecture, default_vars, superres_mag=4,cnn_ratio=4, patch_size=2,embed_dim=256,depth=6,decoder_depth=1,num_heads=4,mlp_ratio=4,drop_path=0.1,drop_rate=0.1):
+def load_architecture(task, data_module, architecture, default_vars, superres_mag=4,cnn_ratio=4, patch_size=2,embed_dim=256,depth=6,decoder_depth=1,num_heads=4,mlp_ratio=4,drop_path=0.1,drop_rate=0.1,adaptive_patching=False,fixed_length=None, smooth=None, canny=None, canny_add=None, physics=False, edge_percentage=.1, grad_deg=1):
     in_vars, out_vars = get_data_variables(data_module)
     in_shape, out_shape = get_data_dims(data_module)
 
@@ -365,6 +365,14 @@ def load_architecture(task, data_module, architecture, default_vars, superres_ma
                     mlp_ratio=mlp_ratio,
                     drop_path=drop_path,
                     drop_rate=drop_rate,
+                    adaptive_patching=adaptive_patching,
+                    fixed_length=fixed_length,
+                    smooth=smooth,
+                    canny=canny,
+                    canny_add=canny_add,
+                    physics=physics,
+                    edge_percentage=edge_percentage,
+                    grad_deg=grad_deg,
                 )
 
 

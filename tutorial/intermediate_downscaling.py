@@ -270,12 +270,37 @@ def main(device):
     mlp_ratio = conf['model']['mlp_ratio']
     drop_path = conf['model']['drop_path']
     drop_rate = conf['model']['drop_rate']
+    adaptive_patching = conf['model']['adaptive_patching']
+    if adaptive_patching:
+        fixed_length = conf['model']['fixed_length']
+        data_key = list(fixed_length.keys())[0]
+
+        physics = conf['model']['physics']
+        if physics:
+            edge_percentage = conf['model']['edge_percentage']
+            grad_deg = conf['model']['grad_deg']
+        else:
+            edge_percentage = None
+            grad_deg = None
+        smooth = conf['model']['smooth']
+        canny = conf['model']['canny']
+        canny_add = conf['model']['canny_add']
+    else:
+        fixed_length = None
+        smooth = None
+        canny = None
+        canny_add = None
+        edge_percentage = None
+        grad_deg = None
 
     if world_rank==0:
-        print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,"data_type",data_type,"train_loss_str",train_loss_str,flush=True)
+        print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,"data_type",data_type,"train_loss_str",train_loss_str,"adaptive_patching",adaptive_patching,"fixed_length",fixed_length,"smooth",smooth,"canny",canny,"canny_add",canny_add,"physics",physics,"edge_percentage",edge_percentage,'grad_deg',grad_deg,flush=True)
 
 
-    model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate}
+    if adaptive_patching:
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key],'smooth':smooth,'canny':canny,'canny_add':canny_add,'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg}
+    else:
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length,'smooth':smooth,'canny':canny,'canny_add':canny_add,'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg}
 
 
     if world_rank==0:
@@ -412,7 +437,10 @@ def main(device):
             _, in_height, in_width = in_shape[1:]
     
             with FSDP.summon_full_params(model):
-                model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars)) 
+                if adaptive_patching:
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length[data_key], on_gpu)
+                else:
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length, on_gpu)
             
     
     
