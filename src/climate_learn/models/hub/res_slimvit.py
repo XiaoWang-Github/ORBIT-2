@@ -91,7 +91,11 @@ class Res_Slim_ViT(nn.Module):
 
         #skip connection path
         self.path2 = nn.ModuleList()
+<<<<<<< HEAD
         self.path2.append(nn.Conv2d(in_channels=(out_channels+3), out_channels=cnn_ratio*superres_mag*superres_mag, kernel_size=(3, 3), stride=1, padding=1)) 
+=======
+        self.path2.append(nn.Conv2d(in_channels=(out_channels+4), out_channels=cnn_ratio*superres_mag*superres_mag, kernel_size=(3, 3), stride=1, padding=1)) 
+>>>>>>> origin/main
         self.path2.append(nn.GELU())
         self.path2.append(nn.PixelShuffle(superres_mag))
         self.path2.append(nn.Conv2d(in_channels=cnn_ratio, out_channels=out_channels, kernel_size=(3, 3), stride=1, padding=1)) 
@@ -104,7 +108,8 @@ class Res_Slim_ViT(nn.Module):
             self.head.append(nn.GELU())
         self.head.append(nn.Linear(embed_dim,out_channels * (superres_mag*patch_size)**2))
         self.head = nn.Sequential(*self.head)
-        
+       
+        self.conv_out = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=(3, 3), stride=1, padding=1) 
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -280,6 +285,11 @@ class Res_Slim_ViT(nn.Module):
         temp_index.append(in_variables.index("land_sea_mask"))
         temp_index.append(in_variables.index("orography"))
         temp_index.append(in_variables.index("lattitude"))
+<<<<<<< HEAD
+=======
+        temp_index.append(in_variables.index("landcover"))
+
+>>>>>>> origin/main
 
         return temp_index
 
@@ -301,7 +311,7 @@ class Res_Slim_ViT(nn.Module):
         # x.shape = [B,num_patches,out_channels*patch_size*patch_size]
         x = self.unpatchify(x,scaling=self.superres_mag, out_channels=self.out_channels)
         # x.shape = [B,out_channels,h*patch_size, w*patch_size]
- 
+        x = self.conv_out(x) 
  
         if path2_result.size(dim=2) !=x.size(dim=2) or path2_result.size(dim=3) !=x.size(dim=3):
             preds = x + path2_result[:,:,0:x.size(dim=2),0:x.size(dim=3)]

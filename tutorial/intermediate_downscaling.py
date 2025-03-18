@@ -112,7 +112,13 @@ def _load_pretrained_weights(model, pretrain_path, device):
 
 
 
-def replace_constant(y, yhat, out_variables):
+def clip_replace_constant(y, yhat, out_variables):
+
+    prcp_index = out_variables.index("total_precipitation_24hr")
+    for i in range(yhat.shape[1]):
+        if i==prcp_index:
+            torch.clamp_(yhat[:,prcp_index,:,:], min=0.0)
+
     for i in range(yhat.shape[1]):
         # if constant replace with ground-truth value
         if out_variables[i] in CONSTANTS:
@@ -132,7 +138,7 @@ def training_step(
     y = y.to(device)
         
     yhat = net.forward(x,in_variables,out_variables)
-    yhat = replace_constant(y, yhat, out_variables)
+    yhat = clip_replace_constant(y, yhat, out_variables)
 
     if y.size(dim=2)!=yhat.size(dim=2) or y.size(dim=3)!=yhat.size(dim=3):
         losses = train_loss_metric(yhat, y[:,:,0:yhat.size(dim=2),0:yhat.size(dim=3)], var_names = out_variables, var_weights=var_weights)
@@ -173,7 +179,7 @@ def evaluate_func(
     y = y.to(device)
  
     yhat = net.forward(x, in_variables,out_variables)
-    yhat = replace_constant(y, yhat, out_variables)
+    yhat = clip_replace_constant(y, yhat, out_variables)
 
     if stage == "val":
         loss_fns = loss_metrics
@@ -240,7 +246,9 @@ def main(device):
     batch_size = conf['trainer']['batch_size']
     num_workers = conf['trainer']['num_workers']
     buffer_size = conf['trainer']['buffer_size']
-    
+    data_type = conf['trainer']['data_type']
+    train_loss_str = conf['trainer']['train_loss']
+  
     pretrain_path = conf['trainer']['pretrain']
     low_res_dir = conf['data']['low_res_dir']
     high_res_dir = conf['data']['high_res_dir']
@@ -287,7 +295,7 @@ def main(device):
     
 
     if world_rank==0:
-        print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,flush=True)
+        print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,"data_type",data_type,"train_loss_str",train_loss_str,flush=True)
 
 
     model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate}
@@ -356,7 +364,11 @@ def main(device):
     
             if first_time_bool:
                 # Set up deep learning model
+<<<<<<< HEAD
                 model, train_loss,val_losses,test_losses,train_transform,val_transforms,test_transforms = cl.load_downscaling_module(device,model=model, data_module=data_module, architecture=preset, train_loss=loss_function, model_kwargs=model_kwargs)
+=======
+                model, train_loss,val_losses,test_losses,train_transform,val_transforms,test_transforms = cl.load_downscaling_module(device,model=model, data_module=data_module, architecture=preset,train_loss = train_loss_str, model_kwargs=model_kwargs)
+>>>>>>> origin/main
       
                 if dist.get_rank()==0:
                     print("train_loss",train_loss,"train_transform",train_transform,"val_losses",val_losses,"val_transforms",val_transforms,flush=True)
@@ -397,6 +409,7 @@ def main(device):
                     )
     
                     check_fn = lambda submodule: isinstance(submodule, Block)  or isinstance(submodule,Sequential)
+<<<<<<< HEAD
     
                 #bfloat32 policy
                 if mp_flag:
@@ -416,6 +429,25 @@ def main(device):
                         # Buffer precision.
                         buffer_dtype=torch.float32,
                     )
+=======
+   
+
+                if data_type == "float32":
+                    precision_dt = torch.float32
+                elif data_type == "bfloat16":
+                    precision_dt = torch.bfloat16
+                else:
+                    raise RuntimeError("Data type not supported") 
+
+                #floating point policy
+                bfloatPolicy = MixedPrecision(
+                    param_dtype=precision_dt,
+                    # Gradient communication precision.
+                    reduce_dtype=precision_dt,
+                    # Buffer precision.
+                    buffer_dtype=precision_dt,
+                )
+>>>>>>> origin/main
     
                 #fully sharded FSDP
                 model = FSDP(model, device_id = local_rank, process_group= None,sync_module_states=True, sharding_strategy=dist.fsdp.ShardingStrategy.FULL_SHARD,auto_wrap_policy = auto_wrap_policy, mixed_precision=bfloatPolicy, forward_prefetch=True, limit_all_gathers = False)
@@ -590,7 +622,7 @@ def main(device):
                 del scheduler_states
     
                 #perform validation
-                if epoch%2==0:
+                if False:
                     with torch.no_grad():
                         #tell the model that we are in eval mode. Matters because we have the dropout
                         model.eval()

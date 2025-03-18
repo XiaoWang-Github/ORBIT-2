@@ -1,11 +1,13 @@
 NAME_TO_VAR = {
     "2m_temperature": "t2m",
+    "2m_temperature_min": "t2m_min",
+    "2m_temperature_max": "t2m_max",
     "10m_u_component_of_wind": "u10",
     "10m_v_component_of_wind": "v10",
     "mean_sea_level_pressure": "msl",
     "surface_pressure": "sp",
     "toa_incident_solar_radiation": "tisr",
-    "total_precipitation": "tp",
+    "total_precipitation_24hr": "tp",
     "land_sea_mask": "lsm",
     "orography": "orography",
     "lattitude": "lat2d",
@@ -24,12 +26,14 @@ VAR_TO_NAME = {v: k for k, v in NAME_TO_VAR.items()}
 
 SINGLE_LEVEL_VARS = [
     "2m_temperature",
-    "10m_u_component_of_wind",
+    "2m_temperature_min",
+    "2m_temperature_max",
+  "10m_u_component_of_wind",
     "10m_v_component_of_wind",
     "mean_sea_level_pressure",
     "surface_pressure",
     "toa_incident_solar_radiation",
-    "total_precipitation",
+    "total_precipitation_24hr",
     "total_cloud_cover",
     "land_sea_mask",
     "orography",
@@ -49,12 +53,14 @@ PRESSURE_LEVEL_VARS = [
 
 VAR_TO_UNIT = {
     "2m_temperature": "K",
-    "10m_u_component_of_wind": "m/s",
+     "2m_temperature_min": "K",
+     "2m_temperature_max": "K",
+  "10m_u_component_of_wind": "m/s",
     "10m_v_component_of_wind": "m/s",
     "mean_sea_level_pressure": "Pa",
     "surface_pressure": "Pa",
     "toa_incident_solar_radiation": "J/m^2",
-    "total_precipitation": "m",
+    "total_precipitation_24hr": "m",
     "total_cloud_cover": None,  # dimensionless
     "land_sea_mask": None,  # dimensionless
     "orography": None,  # dimensionless
@@ -68,7 +74,7 @@ VAR_TO_UNIT = {
     "potential_vorticity": "K m^2 / (kg s)",
 }
 
-PRECIP_VARIABLES = ["total_precipitation", 'prcp']
+PRECIP_VARIABLES = ["total_precipitation_24hr"]
 
 DEFAULT_PRESSURE_LEVELS = [50, 250, 500, 600, 700, 850, 925]
 

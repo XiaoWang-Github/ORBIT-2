@@ -149,7 +149,7 @@ def nc2np(path, variables, years, save_dir, partition, num_shards_per_year):
                 # E[X] = E[E[X|Y]]
                 mean = mean.mean(axis=0)
                 normalize_mean[var] = mean
-                if var == "total_precipitation":
+                if var == "total_precipitation_24hr":
                     normalize_mean[var] = np.zeros_like(normalize_mean[var])
                 normalize_std[var] = std
 

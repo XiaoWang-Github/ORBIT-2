@@ -162,11 +162,7 @@ class IterDataModule(torch.nn.Module):
         normed = OrderedDict()
         for var in variables:
             if var in PRECIP_VARIABLES:
-                if var == 'total_precipitation':
-                    m2mm=hour2day=True
-                else:
-                    m2mm=hour2day=False
-                normed[var] = LogTransform(m2mm, hour2day) 
+                normed[var] = LogTransform(m2mm=True, LOG1P=True, thres_mm_per_day=0.25) 
             else:
                 normed[var] = transforms.Normalize(normalize_mean[var][0], normalize_std[var][0])
         return normed
@@ -186,8 +182,6 @@ class IterDataModule(torch.nn.Module):
         for var in self.out_vars:
             if var == "2m_temperature_extreme_mask":
                 continue
-            if  "ERA5-1hr-superres/1.0_deg" in self.inp_root_dir and var == "total_precipitation":
-                var = "total_precipitation_6hr"
             new_clim_dict[var] = torch.from_numpy(
                 np.squeeze(clim_dict[var].astype(np.float32), axis=0)
             )

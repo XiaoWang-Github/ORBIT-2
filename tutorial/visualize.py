@@ -201,7 +201,7 @@ denorm = test_transforms[0]
 
 print("denorm is ",denorm,flush=True)
 
-checkpoint_file = "./checkpoints/climate/interm_rank_0_epoch_51.ckpt"
+checkpoint_file = "./checkpoints/climate/interm_rank_0_epoch_35.ckpt"
 
 
 #load pretrained model
@@ -234,7 +234,7 @@ cl.utils.visualize.visualize_at_index(
     out_list=out_vars,
     in_transform=denorm,
     out_transform=denorm,
-    variable="total_precipitation",
+    variable="2m_temperature_max",
     src=data_key,
     device = device,
     index=0,  # visualize the first sample of the test set

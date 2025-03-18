@@ -113,6 +113,59 @@ def image_gradient_fn(pred:Pred,
     error = torch.mean(torch.abs(dx - hat_dx) + torch.abs(dy - hat_dy))
     return error
 
+
+@handles_probabilistic
+def bayesian_tv(
+    pred: Pred,
+    target: Union[torch.FloatTensor, torch.DoubleTensor],
+    var_names: Optional[List[str]] = None,
+    var_weights: Optional[Dict[str, float]] = None,
+    aggregate_only: bool = False,
+    lat_weights: Optional[Union[torch.FloatTensor, torch.DoubleTensor]] = None,
+) -> Union[torch.FloatTensor, torch.DoubleTensor]:
+
+    mse_error = (pred - target).square()
+
+    pixel_dif1 = torch.abs(pred[:,:,1:,:] - pred[:,:,:-1,:]) #vertical TV difference
+    pixel_dif2 = torch.abs(pred[:,:,:,1:] - pred[:,:,:,:-1]) #horizontal TV difference
+    pixel_dif3 = torch.abs(pred[:,:,1:,1:] - pred[:,:,:-1,:-1]) #diagonal TV difference
+    pixel_dif4 = torch.abs(pred[:,:,1:,:-1] - pred[:,:,:-1,1:]) #opposite diagonal TV difference
+
+
+    pixel_dif1 = F.pad(pixel_dif1,(0,0,0,1),"constant",0)
+    pixel_dif2 = F.pad(pixel_dif2,(0,1),"constant",0)
+    pixel_dif3 = F.pad(pixel_dif3,(0,1,0,1),"constant",0)
+    pixel_dif4 = F.pad(pixel_dif4,(1,0,0,1),"constant",0)
+
+
+    prior_weight =0.02
+
+    error = mse_error +prior_weight*(pixel_dif1+pixel_dif2 + 0.7*pixel_dif3+0.7*pixel_dif4)
+
+    #print('during  mse with error', error.dtype, pred.dtype, target.dtype)
+    if lat_weights is not None:
+        error = error * lat_weights
+
+    if var_names is not None:
+        assert len(var_names) == pred.shape[1], "Number of variable names must match channel dimension"
+
+        channel_weights = torch.ones(pred.shape[1], device=pred.device, dtype=pred.dtype)
+        for i, var in enumerate(var_names):
+            weight = var_weights.get(var, 1.0)
+            channel_weights[i] = weight
+        weights_expanded = channel_weights.view(1, -1, 1, 1)
+        error = error * weights_expanded
+
+    per_channel_losses = error.mean([0, 2, 3])
+    loss = error.mean()
+    if aggregate_only:
+        return loss
+    return torch.cat((per_channel_losses, loss.unsqueeze(0)))
+
+
+
+
+
 @handles_probabilistic
 def mse(
     pred: Pred,

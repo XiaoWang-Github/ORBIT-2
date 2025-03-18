@@ -201,6 +201,38 @@ class IMAGEGRADIENT(Metric):
 
 
 
+@register("bayesian_tv")
+class Bayesian_TV(Metric):
+    """Computes weighted mean-squared error with variable-specific weights."""
+
+    def __call__(
+        self,
+        pred: Union[torch.FloatTensor, torch.DoubleTensor],
+        target: Union[torch.FloatTensor, torch.DoubleTensor],
+        var_names: Optional[List[str]] = None,
+        var_weights: Optional[Dict[str, float]] = None
+    ) -> Union[torch.FloatTensor, torch.DoubleTensor]:
+        """
+        Compute the bayesian total variation weighted MSE loss.
+        
+        Args:
+            pred: Predictions tensor of shape [B,C,H,W]
+            target: Target tensor of shape [B,C,H,W]
+            
+        Returns:
+            Loss tensor
+        """
+        return bayesian_tv(
+            pred,
+            target,
+            var_names,
+            var_weights,
+            self.aggregate_only
+        )
+
+
+
+
 @register("mse")
 class MSE(Metric):
     """Computes weighted mean-squared error with variable-specific weights."""
