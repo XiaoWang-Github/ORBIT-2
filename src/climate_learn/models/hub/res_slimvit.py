@@ -91,11 +91,7 @@ class Res_Slim_ViT(nn.Module):
 
         #skip connection path
         self.path2 = nn.ModuleList()
-<<<<<<< HEAD
-        self.path2.append(nn.Conv2d(in_channels=(out_channels+3), out_channels=cnn_ratio*superres_mag*superres_mag, kernel_size=(3, 3), stride=1, padding=1)) 
-=======
         self.path2.append(nn.Conv2d(in_channels=(out_channels+4), out_channels=cnn_ratio*superres_mag*superres_mag, kernel_size=(3, 3), stride=1, padding=1)) 
->>>>>>> origin/main
         self.path2.append(nn.GELU())
         self.path2.append(nn.PixelShuffle(superres_mag))
         self.path2.append(nn.Conv2d(in_channels=cnn_ratio, out_channels=out_channels, kernel_size=(3, 3), stride=1, padding=1)) 
@@ -285,11 +281,8 @@ class Res_Slim_ViT(nn.Module):
         temp_index.append(in_variables.index("land_sea_mask"))
         temp_index.append(in_variables.index("orography"))
         temp_index.append(in_variables.index("lattitude"))
-<<<<<<< HEAD
-=======
         temp_index.append(in_variables.index("landcover"))
 
->>>>>>> origin/main
 
         return temp_index
 
