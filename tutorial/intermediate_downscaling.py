@@ -112,13 +112,7 @@ def _load_pretrained_weights(model, pretrain_path, device):
 
 
 
-def clip_replace_constant(y, yhat, out_variables):
-
-    prcp_index = out_variables.index("total_precipitation_24hr")
-    for i in range(yhat.shape[1]):
-        if i==prcp_index:
-            torch.clamp_(yhat[:,prcp_index,:,:], min=0.0)
-
+def replace_constant(y, yhat, out_variables):
     for i in range(yhat.shape[1]):
         # if constant replace with ground-truth value
         if out_variables[i] in CONSTANTS:
@@ -138,7 +132,7 @@ def training_step(
     y = y.to(device)
         
     yhat = net.forward(x,in_variables,out_variables)
-    yhat = clip_replace_constant(y, yhat, out_variables)
+    yhat = replace_constant(y, yhat, out_variables)
 
     if y.size(dim=2)!=yhat.size(dim=2) or y.size(dim=3)!=yhat.size(dim=3):
         losses = train_loss_metric(yhat, y[:,:,0:yhat.size(dim=2),0:yhat.size(dim=3)], var_names = out_variables, var_weights=var_weights)
@@ -179,7 +173,7 @@ def evaluate_func(
     y = y.to(device)
  
     yhat = net.forward(x, in_variables,out_variables)
-    yhat = clip_replace_constant(y, yhat, out_variables)
+    yhat = replace_constant(y, yhat, out_variables)
 
     if stage == "val":
         loss_fns = loss_metrics
@@ -304,9 +298,9 @@ def main(device):
 
 
     if adaptive_patching:
-        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key],'smooth':smooth,'canny':canny,'canny_add':canny_add,'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg,'data_type':data_type}
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key],'smooth':smooth[data_key],'canny':canny[data_key],'canny_add':canny_add[data_key],'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg}
     else:
-        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length,'smooth':smooth,'canny':canny,'canny_add':canny_add,'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg,'data_type':data_type}
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length,'smooth':smooth,'canny':canny,'canny_add':canny_add,'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg}
 
 
     if world_rank==0:
@@ -444,9 +438,9 @@ def main(device):
     
             with FSDP.summon_full_params(model):
                 if adaptive_patching:
-                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length[data_key])
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length[data_key],smooth[data_key],canny[data_key],canny_add[data_key])
                 else:
-                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length)
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length,smooth,canny,canny_add)
             
     
     

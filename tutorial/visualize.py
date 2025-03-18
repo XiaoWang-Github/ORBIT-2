@@ -109,6 +109,7 @@ checkpoint_path = conf['trainer']['checkpoint']
 batch_size = conf['trainer']['batch_size']
 num_workers = conf['trainer']['num_workers']
 buffer_size = conf['trainer']['buffer_size']
+data_type = conf['trainer']['data_type']
 
 pretrain_path = conf['trainer']['pretrain']
 low_res_dir = conf['data']['low_res_dir']
@@ -137,13 +138,38 @@ num_heads = conf['model']['num_heads']
 mlp_ratio = conf['model']['mlp_ratio']
 drop_path = conf['model']['drop_path']
 drop_rate = conf['model']['drop_rate']
+adaptive_patching = conf['model']['adaptive_patching']
+if adaptive_patching:
+    fixed_length = conf['model']['fixed_length']
+    data_key = list(fixed_length.keys())[0]
+
+    physics = conf['model']['physics']
+    if physics:
+        edge_percentage = conf['model']['edge_percentage']
+        grad_deg = conf['model']['grad_deg']
+    else:
+        edge_percentage = None
+        grad_deg = None
+    smooth = conf['model']['smooth']
+    canny = conf['model']['canny']
+    canny_add = conf['model']['canny_add']
+else:
+    fixed_length = None
+    smooth = None
+    canny = None
+    canny_add = None
+    edge_percentage = None
+    grad_deg = None
 
 
 if world_rank==0:
-    print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"preset",preset,"dict_out_variables",dict_out_variables,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,flush=True)
+    print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"preset",preset,"dict_out_variables",dict_out_variables,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,"adaptive_patching",adaptive_patching,"fixed_length",fixed_length,"smooth",smooth,"canny",canny,"canny_add",canny_add,"physics",physics,"edge_percentage",edge_percentage,'grad_deg',grad_deg,flush=True)
 
 
-model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate}
+if adaptive_patching:
+    model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key],'smooth':smooth[data_key],'canny':canny[data_key],'canny_add':canny_add[data_key],'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg}
+else:
+    model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length,'smooth':smooth,'canny':canny,'canny_add':canny_add,'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg}
 
 
 if world_rank==0:
@@ -157,7 +183,8 @@ if preset!="vit" and preset!="res_slimvit":
 
 
 # Set up data
-data_key = "ERA5_1"
+#data_key = "ERA5_1"
+data_key = "PRISM"
 
 in_vars = dict_in_variables[data_key]
 out_vars = dict_out_variables[data_key]
@@ -201,7 +228,7 @@ denorm = test_transforms[0]
 
 print("denorm is ",denorm,flush=True)
 
-checkpoint_file = "./checkpoints/climate/interm_rank_0_epoch_35.ckpt"
+checkpoint_file = checkpoint_path
 
 
 #load pretrained model
@@ -234,7 +261,9 @@ cl.utils.visualize.visualize_at_index(
     out_list=out_vars,
     in_transform=denorm,
     out_transform=denorm,
-    variable="2m_temperature_max",
+    #variable="2m_temperature_max",
+    #variable="2m_temperature_min",
+    variable="total_precipitation_24hr",
     src=data_key,
     device = device,
     index=0,  # visualize the first sample of the test set

@@ -44,7 +44,6 @@ class Res_Slim_ViT(nn.Module):
         physics=False,
         edge_percentage=.1,
         grad_deg=1,
-        data_type="bfloat16"
     ):
         super().__init__()
         self.default_vars = default_vars
@@ -70,7 +69,6 @@ class Res_Slim_ViT(nn.Module):
         self.physics = physics
         self.edge_percentage = edge_percentage
         self.grad_deg = grad_deg
-        self.data_type = data_type
         
         self.token_embeds = nn.ModuleList(
             [PatchEmbed(img_size, patch_size, 1, embed_dim) for i in range(len(default_vars))]
@@ -162,7 +160,7 @@ class Res_Slim_ViT(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
 
-    def data_config(self, res, img_size, in_channels, out_channels, fixed_length):
+    def data_config(self, res, img_size, in_channels, out_channels, fixed_length, smooth, canny, canny_add):
         with torch.no_grad(): 
             orig_size = self.img_size
 
@@ -172,7 +170,7 @@ class Res_Slim_ViT(nn.Module):
             self.out_channels = out_channels
             if self.adaptive_patching:
                 self.num_patches = fixed_length
-                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1, sths=self.smooth, cannys=self.canny, canny_add=self.canny_add, physics=self.physics, edge_percentage=self.edge_percentage, grad_deg=self.grad_deg)
+                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1, sths=smooth, cannys=canny, canny_add=canny_add, physics=self.physics, edge_percentage=self.edge_percentage, grad_deg=self.grad_deg)
             else:
                 self.num_patches = img_size[0] * img_size[1]// (self.patch_size **2)
        
@@ -256,13 +254,7 @@ class Res_Slim_ViT(nn.Module):
 
         x_list = []
         for i in range(B):
-            if self.data_type == "bfloat16":
-                x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.bfloat16).to(x.device))
-                #switch out this line for line above to visualize
-                #x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.float32).to(x.device))
-            else:
-                x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(torch.float32).to(x.device))
-
+                x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(x.dtype).to(x.device))
         x = torch.stack([torch.moveaxis(x_list[i],-1,0) for i in range(len(x_list))])
         return x
 
@@ -321,12 +313,7 @@ class Res_Slim_ViT(nn.Module):
                 seq_img, qdt = self.patchify(x_np)
                 seq_img_list.append(seq_img)
                 qdt_list.append(qdt)
-            if self.data_type == "bfloat16":
-                x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.bfloat16).to(x.device)
-                #switch out this line for line above to visualize
-                #x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.float32).to(x.device)
-            else:
-                x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(torch.float32).to(x.device)
+                x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(x.dtype).to(x.device)
             # x.shape = [B,fixed_length,patch_size*patch_size]
 
             x = self.to_emb(x)

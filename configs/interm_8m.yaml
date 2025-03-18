@@ -37,12 +37,27 @@ model:
     'DAYMET_1': 4051,
 #    'DAYMET_2': 4051,
   }
-  smooth: [1,3,5]
-  canny: [50,100]
-  canny_add: 50
-  #smooth: [1]
-  #canny: [10,20]
-  #canny_add: 20
+  smooth: {
+#    'ERA5_1': [1,3,5],
+#    'ERA5_2': [1,3,5],
+#    'PRISM': [1,3,5],
+    'DAYMET_1': [1,3,5],
+#    'DAYMET_2': [1,3,5],
+  }
+  canny: {
+#    'ERA5_1': [50,100],
+#    'ERA5_2': [50,100],
+#    'PRISM': [25,50],
+    'DAYMET_1': [10,20],
+#    'DAYMET_2': [10,20],
+  }
+  canny_add: {
+#    'ERA5_1': 50,
+#    'ERA5_2': 50,
+#    'PRISM': 25,
+    'DAYMET_1': 20,
+#    'DAYMET_2': 20,
+  }
   physics: False
   edge_percentage: .1
   grad_deg: 2
