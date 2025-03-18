@@ -1,25 +1,14 @@
 #!/bin/bash
 #SBATCH -A lrn036
-<<<<<<< HEAD
-#SBATCH -J fine-tune
-#SBATCH --nodes=2
-#SBATCH --gres=gpu:8
-#SBATCH --ntasks-per-node=8
-#SBATCH --cpus-per-task=7
-#SBATCH -t 00:40:00
-##SBATCH -t 00:05:00
-#SBATCH -p batch
-=======
 #SBATCH -J flash
 #SBATCH --nodes=8
 #SBATCH --gres=gpu:8
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
 #SBATCH -t 02:00:00
->>>>>>> origin/main
 #SBATCH -q debug
-#SBATCH -o ./out/fine-tune-%j.out
-#SBATCH -e ./out/fine-tune-%j.error
+#SBATCH -o flash-%j.out
+#SBATCH -e flash-%j.error
 
 [ -z $JOBID ] && JOBID=$SLURM_JOB_ID
 [ -z $JOBSIZE ] && JOBSIZE=$SLURM_JOB_NUM_NODES
@@ -37,12 +26,7 @@ module load rocm/6.2.0
 
 eval "$(/lustre/orion/world-shared/stf218/atsaris/env_test_march/miniconda/bin/conda shell.bash hook)"
 
-<<<<<<< HEAD
-#conda activate /lustre/orion/lrn036/world-shared/xf9/flash-attention-torch25
-conda activate /lustre/orion/lrn036/world-shared/kurihana/super-res-torchlight/flash-attention-torch25-tak_march12
-=======
 conda activate /lustre/orion/lrn036/world-shared/xf9/flash-attention-torch25
->>>>>>> origin/main
 
 #export LD_LIBRARY_PATH=/lustre/orion/world-shared/stf218/junqi/climax/rccl-plugin-rocm6/lib/:/opt/rocm-6.2.0/lib:$LD_LIBRARY_PATH
 
@@ -64,9 +48,6 @@ export PYTHONPATH=$PWD/../src:$PYTHONPATH
 
 export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
 
-<<<<<<< HEAD
-expname=3190616 #$SLURM_JOB_ID
-=======
 time srun -n $((SLURM_JOB_NUM_NODES*8)) \
 python ./intermediate_downscaling.py ../configs/interm_117m.yaml
 
@@ -79,7 +60,4 @@ python ./intermediate_downscaling.py ../configs/interm_117m.yaml
 #python ./intermediate_downscaling.py ../configs/era5_era5.yaml
 #time srun -n $((SLURM_JOB_NUM_NODES*8)) \
 #python ./intermediate_downscaling.py ../configs/prism_prism.yaml
->>>>>>> origin/main
 
-time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-python ./intermediate_downscaling.py ../configs/interm_prcp.yaml ${expname}
