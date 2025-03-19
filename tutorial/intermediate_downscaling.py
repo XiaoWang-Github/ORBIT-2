@@ -112,7 +112,18 @@ def _load_pretrained_weights(model, pretrain_path, device):
 
 
 
-def replace_constant(y, yhat, out_variables):
+def clip_replace_constant(y, yhat, out_variables):
+￼
+
+￼
+    prcp_index = out_variables.index("total_precipitation_24hr")
+￼
+    for i in range(yhat.shape[1]):
+￼
+        if i==prcp_index:
+￼
+            torch.clamp_(yhat[:,prcp_index,:,:], min=0.0)
+
     for i in range(yhat.shape[1]):
         # if constant replace with ground-truth value
         if out_variables[i] in CONSTANTS:
@@ -132,7 +143,7 @@ def training_step(
     y = y.to(device)
         
     yhat = net.forward(x,in_variables,out_variables)
-    yhat = replace_constant(y, yhat, out_variables)
+    yhat = clip_replace_constant(y, yhat, out_variables)
 
     if y.size(dim=2)!=yhat.size(dim=2) or y.size(dim=3)!=yhat.size(dim=3):
         losses = train_loss_metric(yhat, y[:,:,0:yhat.size(dim=2),0:yhat.size(dim=3)], var_names = out_variables, var_weights=var_weights)
@@ -236,6 +247,7 @@ def main(device):
 
     max_epochs=conf['trainer']['max_epochs']
     checkpoint_path = conf['trainer']['checkpoint']
+    checkpoint_folder = conf['trainer']['checkpoint_folder']
     batch_size = conf['trainer']['batch_size']
     num_workers = conf['trainer']['num_workers']
     buffer_size = conf['trainer']['buffer_size']
@@ -567,7 +579,7 @@ def main(device):
     
    
                 if world_rank ==0:    
-                    checkpoint_path = "checkpoints/climate"
+                    checkpoint_path = "checkpoints/"+checkpoint_folder
                     # Check whether the specified checkpointing path exists or not
                     isExist = os.path.exists(checkpoint_path)
                     if not isExist:
