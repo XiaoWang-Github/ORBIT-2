@@ -112,7 +112,11 @@ def _load_pretrained_weights(model, pretrain_path, device):
 
 
 
-def replace_constant(y, yhat, out_variables):
+def clip_replace_constant(y, yhat, out_variables):
+    prcp_index = out_variables.index("total_precipitation_24hr")
+    for i in range(yhat.shape[1]):
+        if i==prcp_index:
+            torch.clamp_(yhat[:,prcp_index,:,:], min=0.0)
     for i in range(yhat.shape[1]):
         # if constant replace with ground-truth value
         if out_variables[i] in CONSTANTS:
@@ -132,7 +136,7 @@ def training_step(
     y = y.to(device)
         
     yhat = net.forward(x,in_variables,out_variables)
-    yhat = replace_constant(y, yhat, out_variables)
+    yhat = clip_replace_constant(y, yhat, out_variables)
 
     if y.size(dim=2)!=yhat.size(dim=2) or y.size(dim=3)!=yhat.size(dim=3):
         losses = train_loss_metric(yhat, y[:,:,0:yhat.size(dim=2),0:yhat.size(dim=3)], var_names = out_variables, var_weights=var_weights)
