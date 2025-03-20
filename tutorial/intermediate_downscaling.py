@@ -37,11 +37,11 @@ from climate_learn.models.hub.components.cnn_blocks import (
     UpBlock,
     ResidualBlock
 )
-from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
+from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed, interpolate_pos_embed_adaptive
 from climate_learn.dist.profile import *
 
 
-def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path):
+def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, adaptive_patching):
     #load model checkpoint
     if checkpoint_path is not None:
         if os.path.exists(checkpoint_path):
@@ -63,7 +63,7 @@ def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path):
     if pretrain_path is not None:
         if os.path.exists(pretrain_path):
             print("load pretrained model",pretrain_path," Pretrain path found.",flush=True)
-            _load_pretrained_weights(model,pretrain_path,device)  
+            _load_pretrained_weights(model,pretrain_path,device, adaptive_patching)  
         else:
             print("resume from pretrained model was set to True. But the pretrained model path does not exist.",flush=True)
 
@@ -71,7 +71,7 @@ def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path):
 
 
 
-def _load_pretrained_weights(model, pretrain_path, device):
+def _load_pretrained_weights(model, pretrain_path, device, adaptive_patching):
     # map_location = 'cuda:'+str(device)
     map_location = 'cpu'
     checkpoint = torch.load(pretrain_path, map_location=map_location)
@@ -97,7 +97,10 @@ def _load_pretrained_weights(model, pretrain_path, device):
         elif pretrain_model[k].shape != state_dict[k].shape:  #if pre-train and fine-tune model weights dimension doesn't match
             if k =="pos_embed":
                 print("interpolate positional embedding",flush=True)
-                interpolate_pos_embed(model, pretrain_model, new_size=model.img_size)
+                if adaptive_patching:
+                    interpolate_pos_embed_adaptive(model, pretrain_model, new_size=model.fixed_length)
+                else:
+                    interpolate_pos_embed(model, pretrain_model, new_size=model.img_size)
             else:
                 print(f"Removing key {k} from pretrained checkpoint: no matching shape", pretrain_model[k].shape, state_dict[k].shape)
                 del pretrain_model[k]
@@ -386,7 +389,7 @@ def main(device):
                         print(name, param.data.shape)
     
                 # load from checkpoint for continued training , or from pretrained model weights
-                load_checkpoint_pretrain(model, checkpoint_path, pretrain_path)
+                load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, adaptive_patching)
     
     
     

@@ -9,6 +9,7 @@
 
 import numpy as np
 import torch
+#from torchinterp1d import interp1d
 
 
 # --------------------------------------------------------
@@ -99,6 +100,23 @@ def interpolate_pos_embed(model, checkpoint_model, new_size=(64, 128)):
 
             del new_pos_tokens
 
+def interpolate_pos_embed_adaptive(model, checkpoint_model, new_size=127):
+    if "pos_embed" in checkpoint_model:
+        pos_embed_checkpoint = checkpoint_model["pos_embed"]
+        embedding_size = pos_embed_checkpoint.shape[-1]
+        orig_num_patches = pos_embed_checkpoint.shape[-2]
+        patch_size = model.patch_size
+
+        if orig_num_patches != new_size:
+            pos_tokens = pos_embed_checkpoint.reshape(-1, orig_num_patches, embedding_size).permute(0, 2, 1)
+            new_pos_tokens = torch.nn.functional.interpolate(
+                pos_tokens, size=new_size, mode="linear", align_corners=False
+            )
+            new_pos_tokens = new_pos_tokens.permute(0,2,1)
+            checkpoint_model["pos_embed"] = new_pos_tokens
+
+            del new_pos_tokens
+
 
 def interpolate_pos_embed_on_the_fly(pos_embed, patch_size, new_size=(64, 128)):
 
@@ -146,7 +164,7 @@ def interpolate_pos_embed_on_the_fly_adaptive(pos_embed, new_num_patches=127):
         new_pos_tokens = torch.nn.functional.interpolate(
             pos_tokens, size=new_num_patches, mode="linear", align_corners=False
         )
-        new_pos_tokens = new_pos_tokens.permute(0,1,2)
+        new_pos_tokens = new_pos_tokens.permute(0,2,1)
 
         return new_pos_tokens
 
