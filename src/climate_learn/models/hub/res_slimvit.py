@@ -13,8 +13,9 @@ from functools import lru_cache
 import numpy as np
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed_on_the_fly, interpolate_pos_embed_on_the_fly_adaptive
 from climate_learn.models.hub.components.patch_embed import PatchEmbed 
-
 from .components.adaptive_patching import Patchify
+import kornia.filters as K
+import random
 
 @register("res_slimvit")
 class Res_Slim_ViT(nn.Module):
@@ -40,10 +41,6 @@ class Res_Slim_ViT(nn.Module):
         fixed_length=1024,
         smooth=[1,3,5],
         canny=[50,100],
-        canny_add=50,
-        physics=False,
-        edge_percentage=.1,
-        grad_deg=1,
     ):
         super().__init__()
         self.default_vars = default_vars
@@ -65,17 +62,13 @@ class Res_Slim_ViT(nn.Module):
         self.fixed_length = fixed_length
         self.smooth = smooth
         self.canny = canny
-        self.canny_add = canny_add
-        self.physics = physics
-        self.edge_percentage = edge_percentage
-        self.grad_deg = grad_deg
         
         self.token_embeds = nn.ModuleList(
             [PatchEmbed(img_size, patch_size, 1, embed_dim) for i in range(len(default_vars))]
         )
         if self.adaptive_patching:
             self.num_patches = fixed_length
-            self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1, sths=smooth, cannys=canny, canny_add=canny_add, physics=physics, edge_percentage=edge_percentage, grad_deg=grad_deg)
+            self.patchify = Patchify(fixed_length=fixed_length, patch_size=patch_size, num_channels=1)
             self.to_img = nn.Linear(embed_dim,patch_size**2)
             self.to_emb = nn.Linear(patch_size**2,embed_dim)
             self.magnify = nn.Linear(self.out_channels*patch_size**2, self.out_channels*(patch_size*superres_mag)**2)
@@ -160,7 +153,7 @@ class Res_Slim_ViT(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
 
-    def data_config(self, res, img_size, in_channels, out_channels, fixed_length, smooth, canny, canny_add):
+    def data_config(self, res, img_size, in_channels, out_channels, fixed_length, smooth, canny):
         with torch.no_grad(): 
             orig_size = self.img_size
 
@@ -170,10 +163,9 @@ class Res_Slim_ViT(nn.Module):
             self.out_channels = out_channels
             self.smooth = smooth
             self.canny = canny
-            self.canny_add = canny_add
             if self.adaptive_patching:
                 self.num_patches = fixed_length
-                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1, sths=smooth, cannys=canny, canny_add=canny_add, physics=self.physics, edge_percentage=self.edge_percentage, grad_deg=self.grad_deg)
+                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1)
             else:
                 self.num_patches = img_size[0] * img_size[1]// (self.patch_size **2)
        
@@ -257,7 +249,7 @@ class Res_Slim_ViT(nn.Module):
 
         x_list = []
         for i in range(B):
-            x_list.append(torch.from_numpy(qdt_list[i].deserialize(np.expand_dims(x[i].to(torch.float32).detach().cpu().numpy(), axis=-1), self.patch_size*scaling, out_channels)).to(x.dtype).to(x.device))
+            x_list.append(qdt_list[i].deserialize(torch.unsqueeze(x[i], dim=-1), self.patch_size*scaling, out_channels).to(x.dtype))
         x = torch.stack([torch.moveaxis(x_list[i],-1,0) for i in range(len(x_list))])
         return x
 
@@ -308,15 +300,17 @@ class Res_Slim_ViT(nn.Module):
             x = self.unpatchify(x,scaling=1)
             # x.shape = [B,out_channels,h*patch_size, w*patch_size]
 
+            smooth_factor = random.choice(self.smooth)
+            edges = K.canny(x.to(torch.float32)*255,sigma=(smooth_factor,smooth_factor),low_threshold=self.canny[0],high_threshold=self.canny[1])[1]
+
             B = x.shape[0]
             seq_img_list = []
             qdt_list = []
             for i in range(B):
-                x_np = np.moveaxis(x[i].to(torch.float32).detach().cpu().numpy(), 0, -1)
-                seq_img, qdt = self.patchify(x_np)
+                seq_img, qdt = self.patchify(x[i],edges[i][0])
                 seq_img_list.append(seq_img)
                 qdt_list.append(qdt)
-            x = torch.from_numpy(np.stack([seq_img_list[k] for k in range(len(seq_img_list))])).to(x.dtype).to(x.device)
+            x = torch.stack([seq_img_list[k].to(x.dtype) for k in range(len(seq_img_list))])
             # x.shape = [B,fixed_length,patch_size*patch_size]
 
             x = self.to_emb(x)

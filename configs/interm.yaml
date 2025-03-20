@@ -2,7 +2,9 @@
 trainer:
   max_epochs: 100
   checkpoint:
-  pretrain: "./checkpoints/climate/interm_rank_0_epoch_3.ckpt"
+  #pretrain: "./checkpoints/climate/interm_rank_0_epoch_3.ckpt"
+  pretrain:
+  checkpoint_folder: "era51_prism_gpu"
 
   batch_size: 32
   buffer_size: 400
@@ -32,48 +34,35 @@ model:
   drop_rate: 0.1
   adaptive_patching: True
   fixed_length: {
-#    'ERA5_1': 127,
-#    'ERA5_2': 1012,
+    'ERA5_1': 127,
+#    'ERA5_2': 4051,
     'PRISM': 4051,
-    'DAYMET_1': 4051,
+#    'DAYMET_1': 4051,
 #    'DAYMET_2': 4051,
   }
   smooth: {
-#    'ERA5_1': [1,3,5],
+    'ERA5_1': [1,3,5],
 #    'ERA5_2': [1,3,5],
     'PRISM': [1,3,5],
-    'DAYMET_1': [1,3,5],
+#    'DAYMET_1': [1,3,5],
 #    'DAYMET_2': [1,3,5],
   }
   canny: {
-#    'ERA5_1': [50,100],
-#    'ERA5_2': [50,100],
-    'PRISM': [25,50],
-    'DAYMET_1': [10,20],
-#    'DAYMET_2': [10,20],
+    'ERA5_1': [.1,.2],
+#    'ERA5_2': [.1,.2],
+    'PRISM': [.1,.2],
+#    'DAYMET_1': [.1,.2],
+#    'DAYMET_2': [.1,.2],
   }
-  canny_add: {
-#    'ERA5_1': 50,
-#    'ERA5_2': 50,
-    'PRISM': 25,
-    'DAYMET_1': 20,
-#    'DAYMET_2': 20,
-  }
-  #smooth: [1]
-  #canny: [10,20]
-  #canny_add: 20
-  physics: False
-  edge_percentage: .1
-  grad_deg: 2
 
 # ---------------------------- DATA -------------------------------------------
 data:
   low_res_dir: {
 ## (25/03/09) new variable names
-#    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/5.625_deg/",
+    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/5.625_deg/",
 #    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/",
     'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/10.0_arcmin",
-    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/10.0_arcmin",
+#    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/10.0_arcmin",
 #    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.0_arcmin",
 # old datasets
 #    'ERA5_1': "/lustre/orion/lrn036/world-shared/ERA5_npz/5.625_deg/",
@@ -82,10 +71,10 @@ data:
 #    'PRISM': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/prism-superres/10.0_arcmin/",
   }
   high_res_dir: {
-#    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.40625_deg/",
+    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.40625_deg/",
 #    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/",
     'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/2.5_arcmin",
-    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.5_arcmin",
+#    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.5_arcmin",
 #    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/0.5_arcmin",
 # old datasets
 #    'ERA5_1': "/lustre/orion/lrn036/world-shared/ERA5_npz/1.40625_deg/",
