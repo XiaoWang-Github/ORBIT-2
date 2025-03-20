@@ -35,10 +35,10 @@ from climate_learn.models.hub.components.cnn_blocks import (
     ResidualBlock
 )
 
-from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
+from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed, interpolate_pos_embed_adaptive
 
 
-def load_pretrained_weights(model, pretrained_path, device):
+def load_pretrained_weights(model, pretrained_path, device, adaptive_patching):
     # map_location = 'cuda:'+str(device)
     map_location = 'cpu'
     checkpoint = torch.load(pretrained_path, map_location=map_location)
@@ -63,7 +63,10 @@ def load_pretrained_weights(model, pretrained_path, device):
         elif pretrain_model[k].shape != state_dict[k].shape:  #if pre-train and fine-tune model weights dimension doesn't match
             if k =="pos_embed":
                 print("interpolate positional embedding",flush=True)
-                interpolate_pos_embed(model, pretrain_model, new_size=model.img_size)
+                if adaptive_patching:
+                    interpolate_pos_embed_adaptive(model, pretrain_model, new_size=model.fixed_length)
+                else:
+                    interpolate_pos_embed(model, pretrain_model, new_size=model.img_size)
 
             else:
                 print(f"Removing key {k} from pretrained checkpoint: no matching shape", pretrain_model[k].shape, state_dict[k].shape)
@@ -232,7 +235,7 @@ checkpoint_file = "./checkpoints/climate/interm_rank_0_epoch_35.ckpt"
 #load pretrained model
 if os.path.exists(checkpoint_file):
     print("load pretrained model",checkpoint_file," Pretrain path found.",flush=True)
-    load_pretrained_weights(model,checkpoint_file,device)  
+    load_pretrained_weights(model,checkpoint_file,device,adaptive_patching)  
 else:
     print("resume from pretrained model was set to True. But the pretrained model path does not exist.",flush=True)
     sys.exit("pretrain path does not exist")
