@@ -160,7 +160,7 @@ class Res_Slim_ViT(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
 
-    def data_config(self, res, img_size, in_channels, out_channels, fixed_length):
+    def data_config(self, res, img_size, in_channels, out_channels, fixed_length, smooth, canny, canny_add):
         with torch.no_grad(): 
             orig_size = self.img_size
 
@@ -168,9 +168,12 @@ class Res_Slim_ViT(nn.Module):
             self.img_size = img_size
             self.in_channels = in_channels
             self.out_channels = out_channels
+            self.smooth = smooth
+            self.canny = canny
+            self.canny_add = canny_add
             if self.adaptive_patching:
                 self.num_patches = fixed_length
-                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1, sths=self.smooth, cannys=self.canny, canny_add=self.canny_add, physics=self.physics, edge_percentage=self.edge_percentage, grad_deg=self.grad_deg)
+                self.patchify = Patchify(fixed_length=fixed_length, patch_size=self.patch_size, num_channels=1, sths=smooth, cannys=canny, canny_add=canny_add, physics=self.physics, edge_percentage=self.edge_percentage, grad_deg=self.grad_deg)
             else:
                 self.num_patches = img_size[0] * img_size[1]// (self.patch_size **2)
        

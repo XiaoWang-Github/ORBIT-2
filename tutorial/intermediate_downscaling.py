@@ -305,7 +305,7 @@ def main(device):
 
 
     if adaptive_patching:
-        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key],'smooth':smooth,'canny':canny,'canny_add':canny_add,'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg}
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key],'smooth':smooth[data_key],'canny':canny[data_key],'canny_add':canny_add[data_key],'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg}
     else:
         model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'adaptive_patching':adaptive_patching,'fixed_length':fixed_length,'smooth':smooth,'canny':canny,'canny_add':canny_add,'physics':physics,'edge_percentage':edge_percentage,'grad_deg':grad_deg}
 
@@ -445,16 +445,16 @@ def main(device):
     
             with FSDP.summon_full_params(model):
                 if adaptive_patching:
-                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length[data_key])
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length[data_key],smooth[data_key],canny[data_key],canny_add[data_key])
                 else:
-                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length)
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length,smooth,canny,canny_add)
             
     
     
     
             with FSDP.summon_full_params(model):
                 if torch.distributed.get_rank()==0:
-                    print("outside data_config spatial resol is ",model.module.spatial_resolution,"img_size",model.module.img_size,"in_channels",model.module.in_channels,"out_channels",model.module.out_channels,"num_patches",model.module.num_patches,flush=True)
+                    print("outside data_config spatial resol is ",model.module.spatial_resolution,"img_size",model.module.img_size,"in_channels",model.module.in_channels,"out_channels",model.module.out_channels,"num_patches",model.module.num_patches,"smooth",model.module.smooth,"canny",model.module.canny,"canny_add",model.module.canny_add,flush=True)
     
     
     
