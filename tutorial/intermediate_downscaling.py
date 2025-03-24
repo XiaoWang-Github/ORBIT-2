@@ -234,6 +234,7 @@ def main(device):
     print("world_size",world_size,"world_rank",world_rank,"local_rank",local_rank,flush=True)
 
     config_path = sys.argv[1]
+    expname     = sys.argv[2]
 
     if world_rank==0:
         print("config_path",config_path,flush=True)
@@ -545,7 +546,8 @@ def main(device):
     
    
                 if world_rank ==0:    
-                    checkpoint_path = "checkpoints/climate" 
+                    checkpoint_path = f"checkpoints/climate/{train_loss_str}/{expname}" 
+                    #checkpoint_path = "checkpoints/climate" 
                     # Check whether the specified checkpointing path exists or not
                     isExist = os.path.exists(checkpoint_path)
                     if not isExist:
