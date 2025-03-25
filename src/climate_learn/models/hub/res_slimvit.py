@@ -301,7 +301,30 @@ class Res_Slim_ViT(nn.Module):
             # x.shape = [B,out_channels,h*patch_size, w*patch_size]
 
             smooth_factor = random.choice(self.smooth)
-            edges = K.canny(x.to(torch.float32)*255,sigma=(smooth_factor,smooth_factor),low_threshold=self.canny[0],high_threshold=self.canny[1])[1]
+            #Version 1
+            #edges = K.canny(x.to(torch.float32)*255,sigma=(smooth_factor,smooth_factor),low_threshold=self.canny[0],high_threshold=self.canny[1])[1]
+            #Version 2
+            xx = x.view(x.size(0), -1)
+            #xx.shape = [B, out_channels*h*w]
+            #Find max value in image per batch input
+            xmin = torch.min(xx, dim=1)[0]
+            #Find min value in image per batch input
+            xmax = torch.max(xx, dim=1)[0]
+            #Normalize to (0,1)
+            xx = (xx-xmin.reshape(x.size(0),1,1))/(xmax.reshape(x.size(0),1,1)-xmin.reshape(x.size(0),1,1))
+            if x.shape[0] > 1:
+                xxx = torch.cat((xx[0][0],xx[1][1]))
+                for i in range(x.shape[0]-2):
+                    xxx = torch.cat((xxx,xx[i+2][i+2]))
+                del xx
+            else:
+                xxx = xx[0][0]
+                del xx
+            xxx = xxx.reshape(x.shape[0],x.shape[1],x.shape[2],x.shape[3])
+            edges = K.canny(xxx.to(torch.float32)*255,sigma=(smooth_factor,smooth_factor),low_threshold=self.canny[0],high_threshold=self.canny[1])[1]
+            del xxx
+            
+
 
             B = x.shape[0]
             seq_img_list = []
