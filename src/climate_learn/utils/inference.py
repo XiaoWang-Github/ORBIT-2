@@ -168,7 +168,7 @@ def test_on_many_images_org(mm, dm, in_transform, out_transform, variable, src, 
         counter += 1
 
 def test_on_many_images(mm, dm, in_variables, out_variables, in_transform, out_transform, variable, src, outputdir, device, index=-1,
-                        ground_truth=True):
+                        ground_truth=True, rank=0):
     """native_pytorch version 
     
         ground_truth (bool): set False for infrence on global era5
@@ -176,8 +176,8 @@ def test_on_many_images(mm, dm, in_variables, out_variables, in_transform, out_t
     print("Start Inference",flush=True)
 
     # set dtype 
-    torch.set_default_dtype(torch.float32)
-    print(f"Dtype {torch.get_default_dtype()}")
+    #torch.set_default_dtype(torch.float32)
+    #print(f"Dtype {torch.get_default_dtype()}")
     with torch.no_grad():
 
         lat, lon = dm.get_lat_lon()
@@ -231,9 +231,9 @@ def test_on_many_images(mm, dm, in_variables, out_variables, in_transform, out_t
             # Plot the prediction``
             ppred = out_transform(pred)
             ppred = clip_replace_constant(yy, ppred, out_variables)
-            ppred = ppred[:, out_channel].detach().cpu().numpy()
             if torch.isnan(ppred).any():
                 print("Prediction includes NaN\n", np.isnan(ppred))
+            ppred = ppred[:, out_channel].detach().cpu().numpy()
             if src == "era5":
                 if len(ppred.shape) == 2:
                     ppred = np.flip(ppred, 0)
@@ -242,12 +242,12 @@ def test_on_many_images(mm, dm, in_variables, out_variables, in_transform, out_t
 
             # Save image datasets
             os.makedirs(outputdir, exist_ok=True)
-            if not isinstance(img, type(None)) and counter == 0: np.save(os.path.join(outputdir, f'input_{str(counter).zfill(4)}.npy'), img)
-            if ground_truth: np.save(os.path.join(outputdir, f'groundtruth_{str(counter).zfill(4)}.npy'), yy)
-            np.save(os.path.join(outputdir, f'prediction_{str(counter).zfill(4)}.npy'), ppred)
+            if not isinstance(img, type(None)) and counter == 0: np.save(os.path.join(outputdir, f'input_{str(counter).zfill(4)}_rank{str(rank).zfill(2)}.npy'), img)
+            if ground_truth: np.save(os.path.join(outputdir, f'groundtruth_{str(counter).zfill(4)}_rank{str(rank).zfill(2)}.npy'), yy)
+            np.save(os.path.join(outputdir, f'prediction_{str(counter).zfill(4)}_rank{str(rank).zfill(2)}.npy'), ppred)
 
             # Counter
-            print(f"Save image data {counter}...")
+            print(f"[RANK {rank}] Save image data {counter}...")
             
             if counter == index:
                 break
