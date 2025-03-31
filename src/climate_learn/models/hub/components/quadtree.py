@@ -22,7 +22,8 @@ class Rect:
     def contains(self, domain):
         patch = domain[self.y1:self.y2, self.x1:self.x2]
         #return int(np.sum(patch)/255)
-        return int(torch.sum(patch)/255)
+        #return int(torch.sum(patch)/255)
+        return int(torch.sum(patch))
     
     def get_area(self, img):
         return img[self.y1:self.y2, self.x1:self.x2, :]
