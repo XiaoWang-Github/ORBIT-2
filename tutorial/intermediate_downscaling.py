@@ -247,6 +247,12 @@ def main(device):
     buffer_size = conf['trainer']['buffer_size']
     data_type = conf['trainer']['data_type']
     train_loss_str = conf['trainer']['train_loss']
+    use_ddstore = conf['trainer'].get('ddstore', False)
+    use_ddstore_sampler = conf['trainer'].get('ddstore_sampler', "local")
+    if use_ddstore:
+        os.environ["ORBIT_USE_DDSTORE"] = str(int(use_ddstore))
+        os.environ["ORBIT_DDSTORE_METHOD"] = str(1)
+        os.environ["ORBIT_DDSTORE_SAMPLER"] = use_ddstore_sampler
   
     pretrain_path = conf['trainer']['pretrain']
     low_res_dir = conf['data']['low_res_dir']

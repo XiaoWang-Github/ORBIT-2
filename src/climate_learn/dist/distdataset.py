@@ -20,6 +20,13 @@ except:
 import re
 import os
 
+from torch.utils.data.dataloader import _DatasetKind
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+import multiprocessing as mp
+import queue
+import socket
+import logging
+
 
 def dict2list(x, variables):
     xlist = list()
@@ -58,6 +65,127 @@ class DDStoreDataLoader(DataLoader):
 
     def collate_fn(self, batch):
         return super().collate_fn(batch)
+
+## Credit: HydraGNN
+class HydraDataLoader(DataLoader):
+    """
+    A custom data loader with multi-threading on a HPC system.
+    This is to overcome a few problems (affinity, hanging, crashing, etc)
+    with Pytorch's multi-threaded DataLoader on Summit and Perlmutter.
+    (2022/08) jyc: This is a work-in-progress version. Performance is not verified.
+    """
+
+    def __init__(self, dataset, **kwargs):
+        super(HydraDataLoader, self).__init__(dataset, **kwargs)
+        self._dataset_fetcher = _DatasetKind.create_fetcher(
+            self._dataset_kind,
+            self.dataset,
+            self._auto_collation,
+            self.collate_fn,
+            self.drop_last,
+        )
+
+        ## List of threads job (futures)
+        self.fs = queue.Queue()
+
+        logging.debug("num_workers:", self.num_workers)
+        logging.debug("len:", len(self._index_sampler))
+
+    @staticmethod
+    def worker_init(counter):
+        core_width = 2
+        if os.getenv("HYDRAGNN_AFFINITY_WIDTH") is not None:
+            core_width = int(os.environ["HYDRAGNN_AFFINITY_WIDTH"])
+
+        core_offset = 0
+        if os.getenv("HYDRAGNN_AFFINITY_OFFSET") is not None:
+            core_offset = int(os.environ["HYDRAGNN_AFFINITY_OFFSET"])
+
+        with counter.get_lock():
+            wid = counter.value
+            counter.value += 1
+
+        affinity = None
+        if hasattr(os, "sched_getaffinity"):
+            affinity_check = os.getenv("HYDRAGNN_AFFINITY")
+            if affinity_check == "OMP":
+                affinity = parse_omp_places(os.getenv("OMP_PLACES"))
+            else:
+                affinity = list(os.sched_getaffinity(0))
+
+            affinity_mask = set(
+                affinity[
+                    core_width * wid
+                    + core_offset : core_width * (wid + 1)
+                    + core_offset
+                ]
+            )
+            os.sched_setaffinity(0, affinity_mask)
+            affinity = os.sched_getaffinity(0)
+
+        hostname = socket.gethostname()
+        logging.debug(
+            f"Worker: pid={os.getpid()} hostname={hostname} ID={wid} affinity={affinity}"
+        )
+        return 0
+
+    @staticmethod
+    def fetch(dataset, ibatch, index, pin_memory=False):
+        batch = [dataset[i] for i in index]
+        # hostname = socket.gethostname()
+        # log (f"Worker done: pid={os.getpid()} hostname={hostname} ibatch={ibatch}")
+        # data = Batch.from_data_list(batch) ## for pytorch geometric
+        if pin_memory:
+            data = torch.utils.data._utils.pin_memory.pin_memory(data)
+        return (ibatch, batch)
+
+    def __iter__(self):
+        logging.debug("Iterator reset")
+        ## Check previous futures
+        if self.fs.qsize() > 0:
+            logging.debug("Clearn previous futures:", self.fs.qsize())
+            for future in iter(self.fs.get, None):
+                future.cancel()
+
+        ## Resetting
+        self._num_yielded = 0
+        self._sampler_iter = iter(self._index_sampler)
+        self.fs_iter = iter(self.fs.get, None)
+        counter = mp.Value("i", 0)
+        executor = ThreadPoolExecutor(
+            max_workers=self.num_workers,
+            initializer=self.worker_init,
+            initargs=(counter,),
+        )
+        for i in range(len(self._index_sampler)):
+            index = next(self._sampler_iter)
+            future = executor.submit(
+                self.fetch,
+                self.dataset,
+                i,
+                index,
+                pin_memory=self.pin_memory,
+            )
+            self.fs.put(future)
+        self.fs.put(None)
+        # log ("Submit all done.")
+        return self
+
+    def __next__(self):
+        # log ("Getting next", self._num_yielded)
+        future = next(self.fs_iter)
+        ibatch, data = future.result()
+        # log (f"Future done: ibatch={ibatch}", data.num_graphs)
+        self._num_yielded += 1
+        if self.collate_fn is not None:
+            data = self.collate_fn(data)
+        return data
+
+    def clean(self):
+        if self.fs.qsize() > 0:
+            logging.debug("Clearn previous futures:", self.fs.qsize())
+            for future in iter(self.fs.get, None):
+                future.cancel()
 
 
 class DistDataset(Dataset):
@@ -122,7 +250,7 @@ class DistDataset(Dataset):
         print("DDStore method:", ddstore_method)
         print("FABRIC_IFACE:", os.environ["FABRIC_IFACE"])
 
-        self.ddstore = dds.PyDDStore(self.ddstore_comm)
+        self.ddstore = dds.PyDDStore(self.ddstore_comm, method=ddstore_method)
 
         ## register local data
         ## Assume variables and out_variables are same for all

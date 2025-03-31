@@ -24,6 +24,12 @@ from .processing.era5_constants import PRECIP_VARIABLES
 from .precipmodule import LogTransform
 
 from climate_learn.dist.distdataset import *
+from torch.utils.data import SubsetRandomSampler
+from torch.utils.data.distributed import DistributedSampler
+
+def nsplit(a, n):
+    k, m = divmod(len(a), n)
+    return (a[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n))
 
 
 class IterDataModule(torch.nn.Module):
@@ -329,18 +335,36 @@ class IterDataModule(torch.nn.Module):
                 ddp_group = self.ddp_group,
                 )
 
-            sampler = torch.utils.data.distributed.DistributedSampler(trainset, num_replicas=ddp_group_size, rank=ddp_group_rank, shuffle=True)
+            ddstore_sampler = os.getenv("ORBIT_DDSTORE_SAMPLER", "local") ## 0: global 1:local
+            if ddp_group_rank == 0:
+                print("DDStore sampler:", ddstore_sampler)
+            if ddstore_sampler == "global":
+                sampler = DistributedSampler(trainset, num_replicas=ddp_group_size, rank=ddp_group_rank, shuffle=True)
+            elif ddstore_sampler == "local":
+                rx = list(nsplit(range(len(trainset)), ddp_group_size))[ddp_group_rank]
+                sampler = SubsetRandomSampler(rx)
 
-            train_loader = DDStoreDataLoader(
-            # train_loader = torch.utils.data.DataLoader(
-                trainset.ddstore,
-                trainset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                drop_last=True,
-                sampler=sampler,
-                collate_fn=collate_fn,
-            )
+            ddstore_method = int(os.getenv("ORBIT_DDSTORE_METHOD", "0"))
+            if ddstore_method == 0:
+                train_loader = DDStoreDataLoader(
+                    trainset,
+                    batch_size=self.batch_size,
+                    shuffle=False,
+                    drop_last=True,
+                    sampler=sampler,
+                    collate_fn=collate_fn,
+                )
+            else:
+                ## multi-thread
+                train_loader = HydraDataLoader(
+                    trainset,
+                    batch_size=self.batch_size,
+                    shuffle=False,
+                    drop_last=True,
+                    num_workers=self.num_workers,
+                    sampler=sampler,
+                    collate_fn=collate_fn,
+                )
 
             return train_loader
 

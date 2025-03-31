@@ -8,6 +8,8 @@ trainer:
   num_workers: 2
   data_type: bfloat16
   train_loss: "mse"
+  ddstore: True
+  ddstore_sampler: "local"
 
 # ---------------------------- MODEL -------------------------------------------
 model:
