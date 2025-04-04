@@ -2,6 +2,7 @@
 trainer:
   max_epochs: 100
   checkpoint: 
+  checkpoint_folder: "climate"
   pretrain:
   batch_size: 32
   buffer_size: 400
@@ -43,6 +44,28 @@ model:
   mlp_ratio: 4
   drop_path: 0.1
   drop_rate: 0.1
+  adaptive_patching: True
+  fixed_length: {
+#    'ERA5_1': 127,
+#    'ERA5_2': 1024,
+    'PRISM': 4051,
+#    'DAYMET_1': 4051,
+#    'DAYMET_2': 4051,
+  }
+  smooth: {
+#    'ERA5_1': [1,3,5],
+#    'ERA5_2': [1,3,5],
+    'PRISM': [1,3,5],
+#    'DAYMET_1': [1,3,5],
+#    'DAYMET_2': [1,3,5],
+  }
+  canny_tol: {
+#    'ERA5_1': [.1,.2],
+#    'ERA5_2': [.1,.2],
+    'PRISM': [.1,.2],
+#    'DAYMET_1': [.1,.2],
+#    'DAYMET_2': [.1,.2],
+  }
 
 # ---------------------------- DATA -------------------------------------------
 data:

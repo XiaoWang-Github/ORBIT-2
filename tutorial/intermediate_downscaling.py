@@ -37,11 +37,11 @@ from climate_learn.models.hub.components.cnn_blocks import (
     UpBlock,
     ResidualBlock
 )
-from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
+from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed, interpolate_pos_embed_adaptive
 from climate_learn.dist.profile import *
 
 
-def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, cp_save_path, tensor_par_size=1,tensor_par_group=None):
+def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, cp_save_path, adaptive_patching, tensor_par_size=1,tensor_par_group=None):
     world_rank = dist.get_rank()
     local_rank = int(os.environ['SLURM_LOCALID'])
 
@@ -73,7 +73,7 @@ def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, cp_save_path
 
         if os.path.exists(pretrain_path):
             print("world_rank",world_rank,"load pretrained model",pretrain_path," Pretrain path found.",flush=True)
-            _load_pretrained_weights(model,pretrain_path,device,world_rank)  
+            _load_pretrained_weights(model,pretrain_path,device,world_rank,adaptive_patching)  
         else:
             print("resume from pretrained model was set to True. But the pretrained model path does not exist.",flush=True)
             sys.exit("pretrain path does not exist")
@@ -112,7 +112,7 @@ def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, cp_save_path
 
 
 
-def _load_pretrained_weights(model, pretrain_path, device,world_rank):
+def _load_pretrained_weights(model, pretrain_path, device,world_rank,adaptive_patching):
     # map_location = 'cuda:'+str(device)
     map_location = 'cpu'
     checkpoint = torch.load(pretrain_path, map_location=map_location)
@@ -138,7 +138,10 @@ def _load_pretrained_weights(model, pretrain_path, device,world_rank):
         elif pretrain_model[k].shape != state_dict[k].shape:  #if pre-train and fine-tune model weights dimension doesn't match
             if k =="pos_embed":
                 print("interpolate positional embedding",flush=True)
-                interpolate_pos_embed(model, pretrain_model, new_size=model.img_size)
+                if adaptive_patching:
+                    interpolate_pos_embed_adaptive(model, pretrain_model, new_size=model.fixed_length)
+                else:
+                    interpolate_pos_embed(model, pretrain_model, new_size=model.img_size)
             else:
                 print(f"Removing key {k} from pretrained checkpoint: no matching shape", pretrain_model[k].shape, state_dict[k].shape)
                 del pretrain_model[k]
@@ -393,6 +396,7 @@ def main(device):
 
     max_epochs=conf['trainer']['max_epochs']
     checkpoint_path = conf['trainer']['checkpoint']
+    checkpoint_folder = conf['trainer']['checkpoint_folder']
     batch_size = conf['trainer']['batch_size']
     num_workers = conf['trainer']['num_workers']
     buffer_size = conf['trainer']['buffer_size']
@@ -445,12 +449,22 @@ def main(device):
     mlp_ratio = conf['model']['mlp_ratio']
     drop_path = conf['model']['drop_path']
     drop_rate = conf['model']['drop_rate']
+    adaptive_patching = conf['model']['adaptive_patching']
+    if adaptive_patching:
+        fixed_length = conf['model']['fixed_length']
+        smooth = conf['model']['smooth']
+        canny_tol = conf['model']['canny_tol']
+        data_key = list(fixed_length.keys())[0]
+    else:
+        fixed_length = None
+        smooth = None
+        canny_tol = None
 
 
     data_par_size = fsdp_size * simple_ddp_size
 
     if world_rank==0:
-        print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,"data_type",data_type,"train_loss_str",train_loss_str,flush=True)
+        print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"spatial_resolution",spatial_resolution,"default_vars",default_vars,"preset",preset,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,"data_type",data_type,"train_loss_str",train_loss_str,"adaptive_patching",adaptive_patching,"fixed_length",fixed_length,"smooth",smooth,"canny_tol",canny_tol,flush=True)
         print("data_par_size",data_par_size,"fsdp_size",fsdp_size,"simple_ddp_size",simple_ddp_size,"tensor_par_size",tensor_par_size,"seq_par_size",seq_par_size,"division",div,"overlap",overlap,flush=True)
 
     #initialize parallelism groups
@@ -458,7 +472,10 @@ def main(device):
 
 
 
-    model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'tensor_par_size':tensor_par_size, 'tensor_par_group':tensor_par_group}
+    if adaptive_patching:
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'tensor_par_size':tensor_par_size, 'tensor_par_group':tensor_par_group,'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key],'smooth':smooth[data_key],'canny_tol':canny_tol[data_key]}
+    else:
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'tensor_par_size':tensor_par_size, 'tensor_par_group':tensor_par_group,'adaptive_patching':adaptive_patching,'fixed_length':fixed_length,'smooth':smooth,'canny_tol':canny_tol}
 
 
     if world_rank==0:
@@ -483,7 +500,9 @@ def main(device):
 
     epoch_start = 0
 
-    cp_save_path = "checkpoints/climate" 
+    #cp_save_path = "checkpoints/climate" 
+    cp_save_path = "checkpoints/"+checkpoint_folder
+    
 
 
     while (epoch_start+interval_epochs) < max_epochs:
@@ -553,7 +572,7 @@ def main(device):
                         print(name, param.data.shape)
     
                 # load from checkpoint for continued training , or from pretrained model weights
-                load_checkpoint_pretrain(model, checkpoint_path, pretrain_path,cp_save_path,tensor_par_size=tensor_par_size,tensor_par_group=tensor_par_group)
+                load_checkpoint_pretrain(model, checkpoint_path, pretrain_path,cp_save_path,adaptive_patching,tensor_par_size=tensor_par_size,tensor_par_group=tensor_par_group)
     
     
     
@@ -617,7 +636,10 @@ def main(device):
             _, in_height, in_width = in_shape[1:]
    
             with FSDP.summon_full_params(model):
-                model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars))  
+                if adaptive_patching:
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length[data_key],smooth[data_key],canny_tol[data_key])
+                else:
+                    model.data_config(spatial_resolution[data_key],(in_height, in_width),len(in_vars),len(out_vars),fixed_length,smooth,canny_tol)
 
     
             if first_time_bool:

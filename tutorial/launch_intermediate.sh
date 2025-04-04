@@ -1,12 +1,11 @@
 #!/bin/bash
 #SBATCH -A LRN036
 #SBATCH -J flash
-#SBATCH --nodes=32
+#SBATCH --nodes=16
 #SBATCH --gres=gpu:8
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
 #SBATCH -t 01:00:00
-#SBATCH -q debug
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.error
 
@@ -18,16 +17,17 @@
 
 
 
-source ~/miniconda3/etc/profile.d/conda.sh
+#source ~/miniconda3/etc/profile.d/conda.sh
+source /lustre/orion/proj-shared/stf006/irl1/conda/bin/activate
 
 module load PrgEnv-gnu
 module load rocm/6.2.4
 module unload darshan-runtime
 module unload libfabric
 
-eval "$(/lustre/orion/world-shared/stf218/atsaris/env_test_march/miniconda/bin/conda shell.bash hook)"
+#eval "$(/lustre/orion/world-shared/stf218/atsaris/env_test_march/miniconda/bin/conda shell.bash hook)"
 
-conda activate /lustre/orion/lrn036/world-shared/xf9/torch26
+conda activate /lustre/orion/stf006/world-shared/irl1/torch26
 
 #export LD_LIBRARY_PATH=/lustre/orion/world-shared/stf218/junqi/climax/rccl-plugin-rocm6/lib/:/opt/rocm-6.2.0/lib:$LD_LIBRARY_PATH
 
@@ -59,11 +59,11 @@ export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 #python ./intermediate_downscaling.py ../configs/interm_8m.yaml
 
 
-#time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-#python ./intermediate_downscaling.py ../configs/interm_1b.yaml
-
 time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-python ./intermediate_downscaling.py ../configs/interm_10b.yaml
+python ./intermediate_downscaling.py ../configs/interm_1b.yaml
+
+#time srun -n $((SLURM_JOB_NUM_NODES*8)) \
+#python ./intermediate_downscaling.py ../configs/interm_10b.yaml
 
 
 
