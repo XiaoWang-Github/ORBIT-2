@@ -40,6 +40,7 @@ from climate_learn.models.hub.components.cnn_blocks import (
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
 from climate_learn.dist.profile import *
 
+from deepspeed.profiling.flops_profiler import FlopsProfiler
 
 def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, cp_save_path, tensor_par_size=1,tensor_par_group=None):
     world_rank = dist.get_rank()
@@ -538,6 +539,9 @@ def main(device):
             if first_time_bool:
                 # Set up deep learning model
                 model, train_loss,val_losses,test_losses,train_transform,val_transforms,test_transforms = cl.load_downscaling_module(device,model=model, data_module=data_module, architecture=preset,train_loss = train_loss_str, model_kwargs=model_kwargs)
+
+                # DeepSpeed Staff
+                prof = FlopsProfiler(model)
       
                 if dist.get_rank()==0:
                     print("train_loss",train_loss,"train_transform",train_transform,"val_losses",val_losses,"val_transforms",val_transforms,flush=True)
@@ -698,11 +702,35 @@ def main(device):
     
                     if world_rank==0:
                         torch.cuda.synchronize(device=device)
-                        tic1 = time.perf_counter() 
+                        tic1 = time.perf_counter()
+
+                    if (batch_idx==4):
+                        prof.start_profile()
+                        loss = training_step(batch, batch_idx,model,device,var_weights,train_loss)
+                        prof.stop_profile()
+                        flops = prof.get_total_flops() / 1e12
+                        params = prof.get_total_params()
+                        prof.end_profile()
+                    elif (batch_idx==3):
+                        torch.cuda.synchronize(device=device)
+                        t0 = time.perf_counter()
+                        loss = training_step(batch, batch_idx,model,device,var_weights,train_loss)
+                        optimizer.zero_grad()
+                        loss.backward()
+                        optimizer.step()
+                        torch.cuda.synchronize()
+                        iter_latency = time.perf_counter()-t0
+                    else:
+                        loss = training_step(batch, batch_idx,model,device,var_weights,train_loss)
+                        optimizer.zero_grad()
+                        loss.backward()
+                        optimizer.step()
+
+                    if (batch_idx==4): break
     
                     #timer.begin("training_step")
                     ## torch.Size([64, 20, 32, 64]), torch.Size([64, 1, 128, 256])
-                    loss = training_step(batch, batch_idx,model,device,var_weights,train_loss)
+                    #loss = training_step(batch, batch_idx,model,device,var_weights,train_loss)
                     #timer.end("training_step")
     
                     epoch_loss += loss.detach()
@@ -710,12 +738,12 @@ def main(device):
                     if world_rank < tensor_par_size:
                         print("epoch: ",epoch,"batch_idx",batch_idx,"world_rank",world_rank," loss ",loss,flush=True)
         
-                    optimizer.zero_grad()
+                    #optimizer.zero_grad()
                     #timer.begin("backward")
-                    loss.backward()
+                    #loss.backward()
                     #timer.end("backward")
                     #timer.begin("optimizer_step")
-                    optimizer.step()
+                    #optimizer.step()
                     #timer.end("optimizer_step")
    
                     
@@ -734,8 +762,14 @@ def main(device):
         
                 if world_rank==0:
                     print("epoch: ",epoch," epoch_loss ",epoch_loss,flush=True)
+                    print("HERE1", 3*flops/iter_latency, params)
+
+                break
+            break
+        break # We only want 4 iterations
+                    
     
-   
+    """   
                 if world_rank ==0:    
                     # Check whether the specified checkpointing path exists or not
                     isExist = os.path.exists(cp_save_path)
@@ -746,7 +780,7 @@ def main(device):
         
                 if world_rank ==0:     
                     print("rank",world_rank,"Before torch.save torch.cuda.memory_reserved: %fGB"%(torch.cuda.memory_reserved(device)/1024/1024/1024),flush=True)
-        
+
         
                 model_states = model.state_dict()
                 optimizer_states = optimizer.state_dict()
@@ -797,13 +831,13 @@ def main(device):
                                 tic4 = time.perf_counter() 
                                 print(f"my rank {dist.get_rank()}. tic4-tic1 in {(tic4-tic1):0.4f} seconds\n",flush=True)
          
- 
     
             epoch_start = epoch_end
     
             if first_time_bool:
                 first_time_bool = False
     
+    """
 
 
 
