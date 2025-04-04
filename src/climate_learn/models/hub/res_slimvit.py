@@ -15,7 +15,57 @@ from .components.patch_embed import PatchEmbed
 from .components.vit_blocks import Block
 from climate_learn.utils.dist_functions import F_Identity_B_Broadcast, Grad_Inspect
 from climate_learn.utils.fused_attn import FusedAttn
+from climate_learn.utils.dist_functions_tmp import all_gather as mod_all_gather
 
+class CustomCrossAttention(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0. , tensor_par_size = 1, tensor_par_group = None):
+        super().__init__()
+        assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = head_dim ** -0.5
+        self.tensor_par_size = tensor_par_size
+        self.tensor_par_group = tensor_par_group
+    
+     
+        self.q = nn.Linear(dim, dim //tensor_par_size, bias=qkv_bias)
+   
+        self.kv = nn.Linear(dim, dim * 2 //tensor_par_size, bias=qkv_bias)
+
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim // tensor_par_size, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+        #self.data_seq_ort_size = dist.get_world_size()//tensor_par_size
+
+    def forward(self, var_query, x):
+
+        #x= F_Identity_B_AllReduce_VariableMapping(x, group=self.tensor_par_group)
+        #var_query= F_Identity_B_AllReduce_VariableMapping(var_query, group=self.tensor_par_group)
+
+        N_a = var_query.size(dim=1) #Na number of aggregated variables
+        B, N_i, C = x.shape #B batch size times sequence length,  N_i number of input variables, C embedding size
+         
+        q = self.q(var_query).reshape(B, N_a, self.num_heads // self.tensor_par_size, C // self.num_heads ).permute(0, 2, 1, 3)
+       
+        kv = self.kv(x).reshape(B, N_i, 2, self.num_heads //self.tensor_par_size, C // self.num_heads ).permute(2, 0, 3, 1, 4)
+
+        k, v = kv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N_a, C //self.tensor_par_size)
+        x = self.proj_drop(x)
+
+        x = self.proj(x)
+
+        #print("THERE", dist.get_rank(), torch.sum(x), "\n", flush=True)
+
+        #dist.all_reduce(x, op=dist.ReduceOp.SUM, group=self.tensor_par_group)
+
+        return x
 
 @register("res_slimvit")
 class Res_Slim_ViT(nn.Module):
@@ -76,6 +126,9 @@ class Res_Slim_ViT(nn.Module):
 
         #self.var_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
         self.var_agg = VariableMapping_Attention(embed_dim, fused_attn=FusedAttn_option, num_heads=num_heads, qkv_bias=False,tensor_par_size = tensor_par_size, tensor_par_group = tensor_par_group)
+
+        self.var_query_per_rank = nn.Parameter(torch.zeros(1, 1, embed_dim), requires_grad=True)
+        self.var_agg_per_rank = CustomCrossAttention(embed_dim, num_heads=num_heads, qkv_bias=False)
         
         self.pos_embed = nn.Parameter(
             torch.zeros(1, self.num_patches, embed_dim), requires_grad=learn_pos_emb
@@ -200,7 +253,19 @@ class Res_Slim_ViT(nn.Module):
             idx += 1
         return var_embed, var_map
 
+    def aggregate_variables_per_rank(self, x: torch.Tensor):
+        b, _, l, _ = x.shape
+        x = torch.einsum("bvld->blvd", x)
+        x = x.flatten(0, 1)  # BxL, V, D
 
+        var_query = self.var_query_per_rank.repeat_interleave(x.shape[0], dim=0)
+
+        x = self.var_agg_per_rank(var_query, x)  # BxL, V~ , D, where V~ is the aggregated variables
+        
+        x = x.squeeze()
+        x = x.unflatten(dim=0, sizes=(b, l))  # B, L, V~, D
+
+        return x
 
     def aggregate_variables(self, x: torch.Tensor):
         """
@@ -244,6 +309,14 @@ class Res_Slim_ViT(nn.Module):
 
     def forward_encoder(self, x: torch.Tensor, variables):
 
+        ###### CH PARALLEL ########
+        tp_ranks = torch.distributed.get_process_group_ranks(self.tensor_par_group)
+        assert (len(variables)%len(tp_ranks))==0, "data-channels % TP ranks must be 0"
+        chns_per_tp_rank = len(variables) // len(tp_ranks)
+        group_rank = torch.distributed.get_group_rank(self.tensor_par_group, dist.get_rank())
+        variables = variables[group_rank*chns_per_tp_rank:group_rank*chns_per_tp_rank + chns_per_tp_rank]
+        ###########################        
+
         if isinstance(variables, list):
             variables = tuple(variables)
 
@@ -260,6 +333,14 @@ class Res_Slim_ViT(nn.Module):
         var_embed = self.get_var_emb(self.var_embed, variables)
 
         x = x + var_embed.unsqueeze(2)  # B, V, L, D
+
+        ###### CH PARALLEL ########
+        x = self.aggregate_variables_per_rank(x)
+        x = x.unsqueeze(1)
+        
+        gathered_tensors = mod_all_gather(x, self.tensor_par_group)
+        x = torch.cat(gathered_tensors, dim=1)
+        ###########################
 
         # variable aggregation
         x = self.aggregate_variables(x)  # B, L, D, 
