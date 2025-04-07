@@ -15,6 +15,12 @@ from .loaders import (
     load_loss,
     load_transform,
 )
-from .mc_dropout import get_monte_carlo_predictions
+# from .mc_dropout import get_monte_carlo_predictions
+
+from .mc_dropout import (
+    get_monte_carlo_predictions,
+    mctest_on_image,
+    get_mcpreds_at_index,
+)
 
 from .inference import test_on_many_images
