@@ -1,0 +1,247 @@
+#-----------   TRAINER -------------
+trainer:
+  max_epochs: 100
+  checkpoint: "/lustre/orion/cli138/proj-shared/kurihana/super-res-torchlight/tutorial/checkpoints/climate/imagegradient/3222161/interm_rank_0_epoch_67.ckpt" 
+  pretrain: #"/lustre/orion/lrn036/world-shared/xf9/downscale_checkpoint//intermediate_117m.ckpt" 
+  batch_size: 8 
+  buffer_size: 100
+  num_workers: 2
+  data_type: float32 #bfloat16
+  train_loss: "imagegradient"
+
+# ---------------------------- MODEL -------------------------------------------
+model:
+  preset: res_slimvit
+  #lr: 5e-4 # initial until 67 epochs
+  lr: 2e-4 # half after 67 epochs
+  weight_decay: 1e-5
+  beta_1: 0.9
+  beta_2: 0.99
+  warmup_epochs: 2
+  warmup_start_lr: 1e-7
+  eta_min: 1e-8
+  superres_mag: 4
+  cnn_ratio: 4
+  patch_size: 2
+  embed_dim: 1024
+  depth: 8
+  decoder_depth: 4
+  num_heads: 16
+  mlp_ratio: 4
+  drop_path: 0.1
+  drop_rate: 0.1
+
+# ---------------------------- DATA -------------------------------------------
+data:
+  low_res_dir: {
+## (25/03/09) new variable names
+#    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/5.625_deg/",
+#    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/",
+#    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/10.0_arcmin",
+#    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/10.0_arcmin",
+#    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.0_arcmin",
+    'DAYMET_3': "/lustre/orion/lrn036/world-shared/kurihana/regridding/dataset/datasets/ERA5-Daymet-1dy-superres/15.0_arcmin",
+# old datasets
+#    'ERA5_1': "/lustre/orion/lrn036/world-shared/ERA5_npz/5.625_deg/",
+#    'ERA5_1': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/5.625_deg/",
+#    'ERA5_2': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/1.0_deg/",
+#    'PRISM': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/prism-superres/10.0_arcmin/",
+  }
+  high_res_dir: {
+## (25/03/09) new variable names
+#    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.40625_deg/",
+#    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/",
+#    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/2.5_arcmin",
+#    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.5_arcmin",
+#    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/0.5_arcmin",
+     'DAYMET_3': "/lustre/orion/lrn036/world-shared/kurihana/regridding/dataset/datasets/ERA5-Daymet-1dy-superres/3.75_arcmin"
+# old datasets
+#    'ERA5_1': "/lustre/orion/lrn036/world-shared/ERA5_npz/1.40625_deg/",
+#    'ERA5_1': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/1.40625_deg/",
+#    'ERA5_2': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/0.25_deg/",
+#    'PRISM': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/prism-superres/2.5_arcmin/",
+  }
+
+  # input spatial resolution in km
+  spatial_resolution: {
+    'ERA5_1': 625,
+    'ERA5_2': 111,
+    'PRISM':  18,
+    'DAYMET_1':  18,
+    'DAYMET_2':  4,
+    'DAYMET_3':  28,
+  }
+
+  default_vars: [
+    "land_sea_mask",
+    "orography",
+    "lattitude",
+    "landcover",
+    "2m_temperature",
+    "2m_temperature_max",
+    "2m_temperature_min",
+    "temperature_200",
+    "temperature_500",
+    "temperature_850",
+    "10m_u_component_of_wind",
+    "u_component_of_wind_200",
+    "u_component_of_wind_500",
+    "u_component_of_wind_850",
+    "10m_v_component_of_wind",
+    "v_component_of_wind_200",
+    "v_component_of_wind_500",
+    "v_component_of_wind_850",
+    "specific_humidity_200",
+    "specific_humidity_500",
+    "specific_humidity_850",
+    "total_precipitation_24hr",
+    "volumetric_soil_water_layer_1",
+  ]
+  
+  dict_in_variables: {
+    'ERA5_1': [
+    "land_sea_mask",
+    "orography",
+    "lattitude",
+    "landcover",
+    "2m_temperature",
+    "2m_temperature_max",
+    "2m_temperature_min",
+    "temperature_200",
+    "temperature_500",
+    "temperature_850",
+    "10m_u_component_of_wind",
+    "u_component_of_wind_200",
+    "u_component_of_wind_500",
+    "u_component_of_wind_850",
+    "10m_v_component_of_wind",
+    "v_component_of_wind_200",
+    "v_component_of_wind_500",
+    "v_component_of_wind_850",
+    "specific_humidity_200",
+    "specific_humidity_500",
+    "specific_humidity_850",
+    "total_precipitation_24hr",
+    "volumetric_soil_water_layer_1",
+    ],
+    'ERA5_2': [
+    "land_sea_mask",
+    "orography",
+    "lattitude",
+    "landcover",
+    "2m_temperature",
+    "2m_temperature_max",
+    "2m_temperature_min",
+    "temperature_200",
+    "temperature_500",
+    "temperature_850",
+    "10m_u_component_of_wind",
+    "u_component_of_wind_200",
+    "u_component_of_wind_500",
+    "u_component_of_wind_850",
+    "10m_v_component_of_wind",
+    "v_component_of_wind_200",
+    "v_component_of_wind_500",
+    "v_component_of_wind_850",
+    "specific_humidity_200",
+    "specific_humidity_500",
+    "specific_humidity_850",
+    "total_precipitation_24hr",
+    "volumetric_soil_water_layer_1",
+    ],
+    'PRISM': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'DAYMET_1': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'DAYMET_2': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'DAYMET_3': [
+      "land_sea_mask",
+      "landcover",
+      "orography",
+      "lattitude",
+      "2m_temperature",
+      "temperature_200",
+      "temperature_500",
+      "temperature_850",
+      "u_component_of_wind_200",
+      "u_component_of_wind_500",
+      "u_component_of_wind_850",
+      "v_component_of_wind_200",
+      "v_component_of_wind_500",
+      "v_component_of_wind_850",
+      "specific_humidity_200",
+      "specific_humidity_500",
+      "specific_humidity_850",
+      "total_precipitation_24hr",
+      "volumetric_soil_water_layer_1",
+    ],
+  }
+
+  dict_out_variables: {
+    'ERA5_1':[
+        "total_precipitation_24hr",
+        "2m_temperature_min",
+        "2m_temperature_max",
+#        "10m_u_component_of_wind",
+#        "10m_v_component_of_wind",
+    ],
+    'ERA5_2':[
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+#      "10m_u_component_of_wind",
+#      "10m_v_component_of_wind",
+    ],
+    'PRISM': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'DAYMET_1': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'DAYMET_2': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'DAYMET_3': [
+      "total_precipitation_24hr",
+      #"2m_temperature_min",
+      #"2m_temperature_max",
+    ],
+  }
+
+
+  var_weights: {
+    "2m_temperature": 10,
+    "10m_u_component_of_wind": 1,
+    "10m_v_component_of_wind": 1,
+    "total_precipitation_24hr": 1,
+    "2m_temperature_min": 10,
+    "2m_temperature_max": 10,
+  }
