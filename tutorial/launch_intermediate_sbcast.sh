@@ -61,13 +61,16 @@ module use -a /lustre/orion/world-shared/lrn036/jyc/frontier/sw/modulefiles
 module load libfabric/1.22.0p
 
 
-export MIOPEN_DISABLE_CACHE=1
+# export MIOPEN_DISABLE_CACHE=1
 export NCCL_PROTO=Simple
-export MIOPEN_USER_DB_PATH=/tmp/$JOBID
-mkdir -p $MIOPEN_USER_DB_PATH
 export HOSTNAME=$(hostname)
 export PYTHONNOUSERSITE=1
 
+# Needed to bypass MIOpen, Disk I/O Errors
+export MIOPEN_USER_DB_PATH=/tmp/$JOBID
+export MIOPEN_CUSTOM_CACHE_DIR=${MIOPEN_USER_DB_PATH}
+rm -rf ${MIOPEN_USER_DB_PATH}
+mkdir -p $MIOPEN_USER_DB_PATH
 
 export OMP_NUM_THREADS=7
 export PYTHONPATH=$PWD/../src:$PYTHONPATH
