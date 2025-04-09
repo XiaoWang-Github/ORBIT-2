@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH -A lrn036
 #SBATCH -J flash
-#SBATCH --nodes=1
+#SBATCH --nodes=16
 #SBATCH --gres=gpu:8
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
-#SBATCH -t 01:00:00
+#SBATCH -t 02:00:00
 #SBATCH -q debug
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.out
@@ -43,5 +43,13 @@ mkdir -p $MIOPEN_USER_DB_PATH
 export OMP_NUM_THREADS=7
 export PYTHONPATH=$PWD:$PYTHONPATH
 
+
 time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-python ./era5_era5_downscaling.py --max_epochs 30 /lustre/orion/lrn036/world-shared/ERA5_npz/5.625_deg/ /lustre/orion/lrn036/world-shared/ERA5_npz/1.40625_deg/ res_slimvit t2m 
+python ./era5_era5_downscaling.py --max_epochs 40 --checkpoint "./res_slimvit_downscaling_tp/checkpoints/epoch_005-v1.ckpt" /lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/ /lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/ res_slimvit tp 
+
+
+#time srun -n $((SLURM_JOB_NUM_NODES*8)) \
+#python ./era5_era5_downscaling.py --max_epochs 40 /lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/ /lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/ unet t2m 
+
+#time srun -n $((SLURM_JOB_NUM_NODES*8)) \
+#python ./era5_era5_downscaling.py --max_epochs 40 /lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/ /lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/ vit t2m 

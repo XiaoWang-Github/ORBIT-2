@@ -5,7 +5,7 @@ from scipy.stats import rankdata
 from tqdm import tqdm
 from ..data.processing.era5_constants import VAR_TO_UNIT as ERA5_VAR_TO_UNIT
 from ..data.processing.cmip6_constants import VAR_TO_UNIT as CMIP6_VAR_TO_UNIT
-
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
 def visualize_at_index(mm, dm, in_transform, out_transform, variable, src, index=0):
     print("reach here",flush=True)
@@ -122,6 +122,22 @@ def visualize_at_index(mm, dm, in_transform, out_transform, variable, src, index
     bias = ppred - yy
     visualize_sample(bias, extent, f"Bias: {variable_with_units}")
     plt.show()
+
+
+
+    # evaluation metric
+    sr_array = ppred
+    hr_array = yy
+
+
+
+    psnr = peak_signal_noise_ratio(hr_array, sr_array, data_range=hr_array.max() - hr_array.min())
+    ssim = structural_similarity(hr_array, sr_array, data_range=hr_array.max() - hr_array.min())
+
+    print( f"Goodness of fit: PSNR {psnr} , SSIM {ssim}" )
+
+
+
 
     # None, if no history
     return anim

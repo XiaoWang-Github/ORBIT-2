@@ -5,7 +5,7 @@ NAME_TO_VAR = {
     "mean_sea_level_pressure": "msl",
     "surface_pressure": "sp",
     "toa_incident_solar_radiation": "tisr",
-    "total_precipitation": "tp",
+    "total_precipitation_24hr": "tp",
     "land_sea_mask": "lsm",
     "orography": "orography",
     "lattitude": "lat2d",
@@ -29,7 +29,7 @@ SINGLE_LEVEL_VARS = [
     "mean_sea_level_pressure",
     "surface_pressure",
     "toa_incident_solar_radiation",
-    "total_precipitation",
+    "total_precipitation_24hr",
     "total_cloud_cover",
     "land_sea_mask",
     "orography",
@@ -54,7 +54,7 @@ VAR_TO_UNIT = {
     "mean_sea_level_pressure": "Pa",
     "surface_pressure": "Pa",
     "toa_incident_solar_radiation": "J/m^2",
-    "total_precipitation": "m",
+    "total_precipitation_24hr": "m",
     "total_cloud_cover": None,  # dimensionless
     "land_sea_mask": None,  # dimensionless
     "orography": None,  # dimensionless

@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH -A nro108
+#SBATCH -A lrn036
 #SBATCH -J flash
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=7
 #SBATCH -t 00:10:00
-#SBATCH -q debug
+#SBATCH -p batch
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.out
 

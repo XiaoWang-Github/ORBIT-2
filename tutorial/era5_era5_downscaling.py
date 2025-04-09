@@ -54,7 +54,7 @@ parser.add_argument("era5_low_res_dir")
 parser.add_argument("era5_high_res_dir")
 parser.add_argument("preset", choices=["resnet", "unet", "vit","res_slimvit"])
 parser.add_argument(
-    "variable", choices=["t2m", "z500", "t850","u10"], help="The variable to predict."
+    "variable", choices=["t2m", "z500", "t850","u10","tp"], help="The variable to predict."
 )
 parser.add_argument("--summary_depth", type=int, default=1)
 parser.add_argument("--max_epochs", type=int, default=50)
@@ -75,11 +75,13 @@ variables = [
     "temperature",
 #    "relative_humidity",
     "specific_humidity",
+    "total_precipitation_24hr",
 #    "u_component_of_wind",
 #    "v_component_of_wind",
 ]
 out_var_dict = {
     "t2m": "2m_temperature",
+    "tp": "total_precipitation_24hr",
 #    "z500": "geopotential_500",
 #    "t850": "temperature_850",
 #     "u10": "10m_u_component_of_wind"
@@ -98,9 +100,9 @@ dm = cl.data.IterDataModule(
     in_vars,
     out_vars=[out_var_dict[args.variable]],
     subsample=1,
-    batch_size=32,
-    buffer_size=500,
-    num_workers=1,
+    batch_size=8,
+    buffer_size=200,
+    num_workers=2,
 )
 dm.setup()
 
@@ -116,17 +118,14 @@ if world_rank==0:
 pl.seed_everything(0)
 default_root_dir = f"{args.preset}_downscaling_{args.variable}"
 logger = TensorBoardLogger(save_dir=f"{default_root_dir}/logs")
-early_stopping = "train/mse:aggregate"
 
 gpu_stats = DeviceStatsMonitor()
 
 callbacks = [
     RichModelSummary(max_depth=args.summary_depth),
-    EarlyStopping(monitor=early_stopping,patience=args.patience),
     gpu_stats,
     ModelCheckpoint(
         dirpath=f"{default_root_dir}/checkpoints",
-        monitor=early_stopping,
         filename="epoch_{epoch:03d}",
         save_top_k=-1,  # Save all checkpoints
         every_n_epochs=1,  # Save every epoch
