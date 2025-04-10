@@ -124,7 +124,8 @@ def bayesian_tv(
     lat_weights: Optional[Union[torch.FloatTensor, torch.DoubleTensor]] = None,
 ) -> Union[torch.FloatTensor, torch.DoubleTensor]:
 
-    mse_error = (pred - target).square()
+    # mse_error = (pred - target).square()
+    mse_error = abs(pred - target)
 
     pixel_dif1 = torch.abs(pred[:,:,1:,:] - pred[:,:,:-1,:]) #vertical TV difference
     pixel_dif2 = torch.abs(pred[:,:,:,1:] - pred[:,:,:,:-1]) #horizontal TV difference
@@ -138,7 +139,7 @@ def bayesian_tv(
     pixel_dif4 = F.pad(pixel_dif4,(1,0,0,1),"constant",0)
 
 
-    prior_weight =0.02
+    prior_weight =0.01 # 0.02
     prior_error = prior_weight*(pixel_dif1+pixel_dif2 + 0.7*pixel_dif3+0.7*pixel_dif4)
 
 

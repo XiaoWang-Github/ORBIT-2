@@ -289,7 +289,8 @@ def training_step(
     y = y.to(device)
     
     yhat = net.forward(x,in_variables,out_variables)
-    yhat = clip_replace_constant(y, yhat, out_variables)
+    # yhat = clip_replace_constant(y, yhat, out_variables)
+    # yhat = clip_replace_temp(x, y, yhat, in_variables, out_variables)
 
     if y.size(dim=2)!=yhat.size(dim=2) or y.size(dim=3)!=yhat.size(dim=3):
         losses = train_loss_metric(yhat, y[:,:,0:yhat.size(dim=2),0:yhat.size(dim=3)], var_names = out_variables, var_weights=var_weights)
@@ -330,7 +331,8 @@ def evaluate_func(
     y = y.to(device)
  
     yhat = net.forward(x, in_variables,out_variables)
-    yhat = clip_replace_constant(y, yhat, out_variables)
+    # yhat = clip_replace_constant(y, yhat, out_variables)
+    # yhat = clip_replace_temp(x, y, yhat, in_variables, out_variables)
 
     if stage == "val":
         loss_fns = loss_metrics
@@ -399,6 +401,7 @@ def main(device):
     data_type = conf['trainer']['data_type']
     train_loss_str = conf['trainer']['train_loss'] 
     pretrain_path = conf['trainer']['pretrain']
+    cp_save_path = conf['trainer']['cp_save_path']
 
     fsdp_size = conf['parallelism']['fsdp'] 
     simple_ddp_size = conf['parallelism']['simple_ddp']
@@ -483,7 +486,7 @@ def main(device):
 
     epoch_start = 0
 
-    cp_save_path = "checkpoints/climate" 
+    # cp_save_path = "checkpoints/climate/"
 
 
     while (epoch_start+interval_epochs) < max_epochs:

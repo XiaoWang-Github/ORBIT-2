@@ -233,7 +233,7 @@ def visualize_at_index(mm, dm, dm_vis, out_list, in_transform, out_transform,var
 
             xdiv = xdiv.to(device)
             pred = mm.forward(xdiv, in_variables, out_variables)
-            pred = clip_replace_constant(ydiv, pred, out_variables)
+            # pred = clip_replace_constant(ydiv, pred, out_variables)
             print("x.shape",x.shape,"y.shape",y.shape,"pred.shape",pred.shape,flush=True)
 
             xx = xdiv[adj_index]
@@ -362,7 +362,7 @@ def visualize_at_index(mm, dm, dm_vis, out_list, in_transform, out_transform,var
             x = x.to(device)
             pred = mm.forward(x,in_variables,out_variables)
 
-            pred = clip_replace_constant(y, pred, out_variables)
+            # pred = clip_replace_constant(y, pred, out_variables)
 
             print("x.shape",x.shape,"y.shape",y.shape,"pred.shape",pred.shape,flush=True)
             

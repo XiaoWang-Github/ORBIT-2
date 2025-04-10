@@ -324,7 +324,7 @@ if preset!="vit" and preset!="res_slimvit":
 
 
 # Set up data
-data_key = "ERA5_1"
+data_key = "DAYMET_3"
 
 in_vars = dict_in_variables[data_key]
 out_vars = dict_out_variables[data_key]
@@ -392,7 +392,9 @@ denorm = test_transforms[0]
 
 print("denorm is ",denorm,flush=True)
 
-pretrain_path = "./checkpoints/climate/interm_epoch_6.ckpt"
+# define your checkpoint path here otherwise it would use the one provided through "pretrain" in yaml
+# pretrain_path = "./checkpoints/climate/interm_epoch_6.ckpt"
+# pretrain_path = "./checkpoints/climate/finetuning_1b_daymet3_step2/interm_epoch_88.ckpt"
 
 # load from pretrained model weights
 load_checkpoint_pretrain(model, pretrain_path,tensor_par_size=tensor_par_size,tensor_par_group=tensor_par_group)
@@ -464,7 +466,7 @@ cl.utils.visualize.visualize_at_index(
     out_list=out_vars,
     in_transform=denorm,
     out_transform=denorm,
-    variable="2m_temperature_max",
+    variable="2m_temperature_min",
     src=data_key,
     device = device,
     div=div,

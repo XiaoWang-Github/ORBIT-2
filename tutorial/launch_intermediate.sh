@@ -1,18 +1,17 @@
 #!/bin/bash
 #SBATCH -A LRN036
 #SBATCH -J flash
-#SBATCH --nodes=32
+#SBATCH --nodes=64
 #SBATCH --gres=gpu:8
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
-#SBATCH -t 01:00:00
-#SBATCH -q debug
-#SBATCH -o flash-%j.out
-#SBATCH -e flash-%j.error
+#SBATCH -t 02:00:00
+##SBATCH -q debug
+#SBATCH -o logs/ft-1b-%j.out
+#SBATCH -e logs/ft-1b-%j.error
 
 [ -z $JOBID ] && JOBID=$SLURM_JOB_ID
 [ -z $JOBSIZE ] && JOBSIZE=$SLURM_JOB_NUM_NODES
-
 
 #ulimit -n 65536
 
@@ -27,7 +26,8 @@ module unload libfabric
 
 eval "$(/lustre/orion/world-shared/stf218/atsaris/env_test_march/miniconda/bin/conda shell.bash hook)"
 
-conda activate /lustre/orion/lrn036/world-shared/xf9/torch26
+# conda activate /lustre/orion/lrn036/world-shared/xf9/torch26
+conda activate /lustre/orion/stf006/proj-shared/nafi/envs/climate-torch26
 
 #export LD_LIBRARY_PATH=/lustre/orion/world-shared/stf218/junqi/climax/rccl-plugin-rocm6/lib/:/opt/rocm-6.2.0/lib:$LD_LIBRARY_PATH
 
@@ -62,8 +62,16 @@ export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 #time srun -n $((SLURM_JOB_NUM_NODES*8)) \
 #python ./intermediate_downscaling.py ../configs/interm_1b.yaml
 
+# time srun -n $((SLURM_JOB_NUM_NODES*8)) \
+# python ./intermediate_downscaling.py ../configs/interm_10b.yaml
+
+# for initial fine tuning with bfloat16
 time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-python ./intermediate_downscaling.py ../configs/interm_10b.yaml
+python ./intermediate_downscaling.py ../configs/interm_1b_finetune_step1.yaml
+
+# # further fine tuning with float32
+# time srun -n $((SLURM_JOB_NUM_NODES*8)) \
+# python ./intermediate_downscaling.py ../configs/interm_1b_finetune_step2.yaml
 
 
 

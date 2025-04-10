@@ -16,3 +16,5 @@ from .loaders import (
     load_transform,
 )
 from .mc_dropout import get_monte_carlo_predictions
+
+from .inference import test_on_many_images
