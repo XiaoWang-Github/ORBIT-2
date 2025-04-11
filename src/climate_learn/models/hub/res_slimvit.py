@@ -83,7 +83,7 @@ class Res_Slim_ViT(nn.Module):
             self.to_emb = nn.Linear(patch_size**2,embed_dim)
             self.magnify = nn.Linear(self.out_channels*patch_size**2, self.out_channels*(patch_size*superres_mag)**2)
         else:
-            self.num_patches = self.token_embeds[0].num_patche
+            self.num_patches = self.token_embeds[0].num_patches
 
         # variable embedding to denote which variable each token belongs to
         # helps in aggregating variables

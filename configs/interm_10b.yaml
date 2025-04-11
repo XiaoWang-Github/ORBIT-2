@@ -1,11 +1,12 @@
 #-----------   TRAINER -------------
 trainer:
   max_epochs: 100
-  checkpoint: "./checkpoints/climate/interm_epoch_4.ckpt"
+  checkpoint:
+  checkpoint_folder: "interm_10b"
   pretrain: 
-  batch_size: 32
+  batch_size: 16
   buffer_size: 200
-  num_workers: 1
+  num_workers: 2
   data_type: bfloat16
   train_loss: "bayesian_tv"
 
@@ -13,15 +14,15 @@ trainer:
 #----------  Parallelism -------------
 parallelism:
   fsdp: 8
-  simple_ddp: 8
-  tensor_par: 4
+  simple_ddp: 2
+  tensor_par: 2
   seq_par: 1
  
 ### Tiling
 tiling:
-  do_tiling: False
-  div: 2
-  overlap: 2
+  do_tiling: True
+  div: 4
+  overlap: 3
  
 # ---------------------------- MODEL -------------------------------------------
 model:
@@ -43,13 +44,36 @@ model:
   mlp_ratio: 4
   drop_path: 0.1
   drop_rate: 0.1
+  adaptive_patching: False
+  fixed_length: {
+#    'ERA5_1': 127,
+    'ERA5_2': 1024,
+#    'PRISM': 4051,
+#    'DAYMET_1': 4051,
+#    'DAYMET_2': 4051,
+  }
+  smooth: {
+#    'ERA5_1': [1,3,5],
+    'ERA5_2': [1,3,5],
+#    'PRISM': [1,3,5],
+#    'DAYMET_1': [1,3,5],
+#    'DAYMET_2': [1,3,5],
+  }
+  canny_tol: {
+#    'ERA5_1': [.1,.2],
+    'ERA5_2': [.1,.2],
+#    'PRISM': [.1,.2],
+#    'DAYMET_1': [.1,.2],
+#    'DAYMET_2': [.1,.2],
+  }
+
 
 # ---------------------------- DATA -------------------------------------------
 data:
   low_res_dir: {
 ## (25/03/09) new variable names
-    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/5.625_deg/",
-#    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/",
+#    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/5.625_deg/",
+    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/",
 #    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/10.0_arcmin",
 #    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/10.0_arcmin",
 #    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.0_arcmin",
@@ -61,8 +85,8 @@ data:
   }
   high_res_dir: {
 ## (25/03/09) new variable names
-    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.40625_deg/",
-#    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/",
+#    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.40625_deg/",
+    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/",
 #    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/2.5_arcmin",
 #    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.5_arcmin",
 #    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/0.5_arcmin",
