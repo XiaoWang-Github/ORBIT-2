@@ -5,7 +5,7 @@ trainer:
   checkpoint_folder: "interm_117m"
   pretrain: 
   batch_size: 32 
-  buffer_size: 500
+  buffer_size: 600
   num_workers: 2
   data_type: bfloat16
   train_loss: "bayesian_tv"
@@ -13,7 +13,7 @@ trainer:
 
 #----------  Parallelism -------------
 parallelism:
-  fsdp: 8
+  fsdp: 16
   simple_ddp: 1024
   tensor_par: 1
   seq_par: 1
@@ -71,10 +71,30 @@ model:
 data:
   low_res_dir: {
 ## (25/03/09) new variable names
-#    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/5.625_deg/",
+    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/",
     'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/",
-#    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/10.0_arcmin",
-#    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/10.0_arcmin",
+    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/10.0_arcmin",
+    "GCM-ACCESS": "/lustre/orion/world-shared/lrn036/data/superres/GCM-ACCESS-CM2/10.0_arcmin",
+    "GCM-BCC": "/lustre/orion/world-shared/lrn036/data/superres/GCM-BCC-CSM2-MR/10.0_arcmin",
+    "GCM-CNRM": "/lustre/orion/world-shared/lrn036/data/superres/GCM-CNRM-ESM2-1/10.0_arcmin",
+    "GCM-MPI": "/lustre/orion/world-shared/lrn036/data/superres/GCM-MPI-ESM1-2-HR/10.0_arcmin/",
+    "GCM-MRI": "/lustre/orion/world-shared/lrn036/data/superres/GCM-MRI-ESM2-0/10.0_arcmin/",
+    "GCM-NorESM2": "/lustre/orion/world-shared/lrn036/data/superres/GCM-NorESM2-MM/10.0_arcmin/",
+    "RegCM-ACCESS": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-ACCESS-CM2/10.0_arcmin",
+    "RegCM-BCC": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-BCC-CSM2-MR/10.0_arcmin",
+    "RegCM-CNRM": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-CNRM-ESM2-1/10.0_arcmin",
+    "RegCM-MPI": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-MPI-ESM1-2-HR/10.0_arcmin/",
+    "RegCM-MRI": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-MRI-ESM2-0/10.0_arcmin/",
+    "RegCM-NorESM2": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-NorESM2-MM/10.0_arcmin/",
+    "DAYMET_1": "/lustre/orion/lrn036/world-shared/data/superres/daymet/10.0_arcmin",
+
+    "copy-PRISM": "/lustre/orion/lrn036/world-shared/data/superres/prism/10.0_arcmin",
+    "copy-GCM-ACCESS": "/lustre/orion/lrn036/scratch/xf9/data/superres/GCM-ACCESS-CM2/10.0_arcmin",
+    "copy-GCM-BCC": "/lustre/orion/lrn036/scratch/xf9/data/superres/GCM-BCC-CSM2-MR/10.0_arcmin",
+    "copy-GCM-CNRM": "/lustre/orion/lrn036/scratch/xf9/data/superres/GCM-CNRM-ESM2-1/10.0_arcmin",
+    "copy-GCM-MPI": "/lustre/orion/lrn036/scratch/xf9/data/superres/GCM-MPI-ESM1-2-HR/10.0_arcmin/",
+    "copy-DAYMET_1": "/lustre/orion/lrn036/scratch/xf9/data/superres/daymet/10.0_arcmin",
+
 #    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.0_arcmin",
 # old datasets
 #    'ERA5_1': "/lustre/orion/lrn036/world-shared/ERA5_npz/5.625_deg/",
@@ -84,10 +104,31 @@ data:
   }
   high_res_dir: {
 ## (25/03/09) new variable names
-#    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.40625_deg/",
+    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/",
     'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/",
-#    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/2.5_arcmin",
-#    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.5_arcmin",
+    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/2.5_arcmin",
+    "GCM-ACCESS": "/lustre/orion/world-shared/lrn036/data/superres/GCM-ACCESS-CM2/2.5_arcmin",
+    "GCM-BCC": "/lustre/orion/world-shared/lrn036/data/superres/GCM-BCC-CSM2-MR/2.5_arcmin",
+    "GCM-CNRM": "/lustre/orion/world-shared/lrn036/data/superres/GCM-CNRM-ESM2-1/2.5_arcmin",
+    "GCM-MPI": "/lustre/orion/world-shared/lrn036/data/superres/GCM-MPI-ESM1-2-HR/2.5_arcmin/",
+    "GCM-MRI": "/lustre/orion/world-shared/lrn036/data/superres/GCM-MRI-ESM2-0/2.5_arcmin/",
+    "GCM-NorESM2": "/lustre/orion/world-shared/lrn036/data/superres/GCM-NorESM2-MM/2.5_arcmin/",
+    "RegCM-ACCESS": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-ACCESS-CM2/2.5_arcmin",
+    "RegCM-BCC": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-BCC-CSM2-MR/2.5_arcmin",
+    "RegCM-CNRM": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-CNRM-ESM2-1/2.5_arcmin",
+    "RegCM-MPI": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-MPI-ESM1-2-HR/2.5_arcmin/",
+    "RegCM-MRI": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-MRI-ESM2-0/2.5_arcmin/",
+    "RegCM-NorESM2": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-NorESM2-MM/2.5_arcmin/",
+    "DAYMET_1": "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.5_arcmin",
+
+    "copy-PRISM": "/lustre/orion/lrn036/world-shared/data/superres/prism/2.5_arcmin",
+    "copy-GCM-ACCESS": "/lustre/orion/lrn036/scratch/xf9/data/superres/GCM-ACCESS-CM2/2.5_arcmin",
+    "copy-GCM-BCC": "/lustre/orion/lrn036/scratch/xf9/data/superres/GCM-BCC-CSM2-MR/2.5_arcmin",
+    "copy-GCM-CNRM": "/lustre/orion/lrn036/scratch/xf9/data/superres/GCM-CNRM-ESM2-1/2.5_arcmin",
+    "copy-GCM-MPI": "/lustre/orion/lrn036/scratch/xf9/data/superres/GCM-MPI-ESM1-2-HR/2.5_arcmin/",
+    "copy-DAYMET_1": "/lustre/orion/lrn036/scratch/xf9/data/superres/daymet/2.5_arcmin",
+
+
 #    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/0.5_arcmin",
 # old datasets
 #    'ERA5_1': "/lustre/orion/lrn036/world-shared/ERA5_npz/1.40625_deg/",
@@ -95,14 +136,46 @@ data:
 #    'ERA5_2': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/0.25_deg/",
 #    'PRISM': "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/prism-superres/2.5_arcmin/",
   }
-
   # input spatial resolution in km
   spatial_resolution: {
     'ERA5_1': 625,
     'ERA5_2': 111,
     'PRISM':  18,
     'DAYMET_1':  18,
+    'GCM-ACCESS': 18,
+    'GCM-BCC': 18,
+    'GCM-CNRM': 18,
+    'GCM-MPI': 18,
+    'GCM-MRI': 18,
+    'GCM-NorESM2': 18,
+    'RegCM-ACCESS': 18,
+    'RegCM-BCC': 18,
+    'RegCM-CNRM': 18,
+    'RegCM-MPI': 18,
+    'RegCM-MRI': 18,
+    'RegCM-NorESM2': 18,
     'DAYMET_2':  4,
+
+    'copy-ERA5_1': 625,
+    'copy-ERA5_2': 111,
+    'copy-PRISM':  18,
+    'copy-DAYMET_1':  18,
+    'copy-GCM-ACCESS': 18,
+    'copy-GCM-BCC': 18,
+    'copy-GCM-CNRM': 18,
+    'copy-GCM-MPI': 18,
+    'copy-GCM-MRI': 18,
+    'copy-GCM-NorESM2': 18,
+    'copy-RegCM-ACCESS': 18,
+    'copy-RegCM-BCC': 18,
+    'copy-RegCM-CNRM': 18,
+    'copy-RegCM-MPI': 18,
+    'copy-RegCM-MRI': 18,
+    'copy-RegCM-NorESM2': 18,
+    'copy-DAYMET_2':  4,
+
+
+
   }
 
   default_vars: [
@@ -130,7 +203,7 @@ data:
     "total_precipitation_24hr",
     "volumetric_soil_water_layer_1",
   ]
-  
+
   dict_in_variables: {
     'ERA5_1': [
     "land_sea_mask",
@@ -191,6 +264,116 @@ data:
       "2m_temperature_min",
       "2m_temperature_max",
     ],
+    'GCM-ACCESS': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+
+    'GCM-BCC': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'GCM-CNRM': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'GCM-MPI': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'GCM-MRI': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'GCM-NorESM2': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-ACCESS': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-BCC': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-CNRM': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-MPI': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-MRI': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-NorESM2': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+
     'DAYMET_1': [
       "land_sea_mask",
       "orography",
@@ -210,8 +393,76 @@ data:
       "2m_temperature_max",
     ],
 
-  }
 
+    'copy-PRISM': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-GCM-ACCESS': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+
+    'copy-GCM-BCC': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-GCM-CNRM': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+],
+    'copy-GCM-MPI': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-GCM-MRI': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+
+    'copy-DAYMET_1': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "landcover",
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+
+
+
+  }
   dict_out_variables: {
     'ERA5_1':[
         "total_precipitation_24hr",
@@ -232,6 +483,67 @@ data:
       "2m_temperature_min",
       "2m_temperature_max",
     ],
+    'GCM-ACCESS': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'GCM-BCC': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'GCM-CNRM': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'GCM-MPI': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'GCM-MRI': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'GCM-NorESM2': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-ACCESS': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-BCC': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-CNRM': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-MPI': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-MRI': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'RegCM-NorESM2': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+
     'DAYMET_1': [
       "total_precipitation_24hr",
       "2m_temperature_min",
@@ -242,6 +554,53 @@ data:
       "2m_temperature_min",
       "2m_temperature_max",
     ],
+    'copy-PRISM': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-GCM-ACCESS': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-GCM-BCC': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-GCM-CNRM': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-GCM-MPI': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-GCM-MRI': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-GCM-NorESM2': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-DAYMET_1': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+    'copy-DAYMET_2': [
+      "total_precipitation_24hr",
+      "2m_temperature_min",
+      "2m_temperature_max",
+    ],
+
+
   }
 
 
@@ -253,3 +612,5 @@ data:
     "2m_temperature_min": 10,
     "2m_temperature_max": 10,
   }
+
+
