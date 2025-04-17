@@ -138,7 +138,7 @@ def bayesian_tv(
     pixel_dif4 = F.pad(pixel_dif4,(1,0,0,1),"constant",0)
 
 
-    prior_weight =0.02
+    prior_weight =0.005
     prior_error = prior_weight*(pixel_dif1+pixel_dif2 + 0.7*pixel_dif3+0.7*pixel_dif4)
 
 

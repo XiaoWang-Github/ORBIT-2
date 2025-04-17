@@ -2,7 +2,7 @@
 trainer:
   max_epochs: 100
   checkpoint: 
-  pretrain: "/lustre/orion/lrn036/world-shared/patrickfan/super-res-torchlight_global0.25_inference/to_ming/3246320/interm_epoch_77.ckpt"
+  pretrain: "./checkpoints/climate/interm_epoch_1.ckpt"
   batch_size: 1 
   buffer_size: 10
   num_workers: 2

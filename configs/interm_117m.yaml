@@ -1,25 +1,25 @@
 #-----------   TRAINER -------------
 trainer:
   max_epochs: 100
-  checkpoint: 
-  pretrain: 
-  batch_size: 8 
-  buffer_size: 100
+  checkpoint: "../tutorial/checkpoints/climate/interm_epoch_5.ckpt"
+  pretrain: #"../tutorial/checkpoints/climate-float32/interm_epoch_7.ckpt"
+  batch_size: 64
+  buffer_size: 400
   num_workers: 2
-  data_type: bfloat16
+  data_type: float32
   train_loss: "bayesian_tv"
 
 
 #----------  Parallelism -------------
 parallelism:
-  fsdp: 4
-  simple_ddp: 4
+  fsdp: 16
+  simple_ddp: 16
   tensor_par: 1
   seq_par: 1
  
 ### Tiling
 tiling:
-  do_tiling: False
+  do_tiling: True
   div: 4
   overlap: 3
  
@@ -49,9 +49,9 @@ data:
   low_res_dir: {
 ## (25/03/09) new variable names
 #    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/5.625_deg/",
-#    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/",
-    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/10.0_arcmin",
-    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/10.0_arcmin",
+    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.0_deg/",
+#    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/10.0_arcmin",
+#    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/10.0_arcmin",
 #    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.0_arcmin",
 # old datasets
 #    'ERA5_1': "/lustre/orion/lrn036/world-shared/ERA5_npz/5.625_deg/",
@@ -62,9 +62,9 @@ data:
   high_res_dir: {
 ## (25/03/09) new variable names
 #    'ERA5_1': "/lustre/orion/lrn036/world-shared/data/superres/era5/1.40625_deg/",
-#    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/",
-    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/2.5_arcmin",
-    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.5_arcmin",
+    'ERA5_2': "/lustre/orion/lrn036/world-shared/data/superres/era5/0.25_deg/",
+#    'PRISM': "/lustre/orion/lrn036/world-shared/data/superres/prism/2.5_arcmin",
+#    'DAYMET_1': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.5_arcmin",
 #    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/0.5_arcmin",
 # old datasets
 #    'ERA5_1': "/lustre/orion/lrn036/world-shared/ERA5_npz/1.40625_deg/",
@@ -199,8 +199,8 @@ data:
     ],
     'ERA5_2':[
       "total_precipitation_24hr",
-      "2m_temperature_min",
-      "2m_temperature_max",
+#      "2m_temperature_min",
+#      "2m_temperature_max",
 #      "10m_u_component_of_wind",
 #      "10m_v_component_of_wind",
     ],

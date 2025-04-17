@@ -1,0 +1,32 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: "ClimateLearn: Benchmarking Machine Learning for Weather and Climate Modeling"
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Tung
+    family-names: Nguyen
+    email: tungnd@cs.ucla.edu
+    affiliation: 'University of California, Los Angeles'
+  - given-names: Jason
+    family-names: Jewik
+    email: jason.jewik@ucla.edu
+    affiliation: 'University of California, Los Angeles'
+  - given-names: Hritik
+    family-names: Bansal
+    email: hbansal@ucla.edu
+    affiliation: 'University of California, Los Angeles'
+  - given-names: Prakhar
+    family-names: Sharma
+    email: prakhar6sharma@gmail.com
+    affiliation: 'University of California, Los Angeles'
+  - given-names: Aditya
+    family-names: Grover
+    email: adityag@cs.ucla.edu
+    affiliation: 'University of California, Los Angeles'
+license: MIT
+repository-code: "https://github.com/aditya-grover/climate-learn"

@@ -1,0 +1,74 @@
+#-----------   TRAINER -------------
+trainer:
+  max_epochs: 100
+  checkpoint: 
+  pretrain: 
+  batch_size: 64
+  buffer_size: 400
+  num_workers: 1
+
+
+# ---------------------------- MODEL -------------------------------------------
+model:
+  preset: res_slimvit
+  lr: 2e-3
+  weight_decay: 1e-5
+  beta_1: 0.9
+  beta_2: 0.99
+  warmup_epochs: 2
+  warmup_start_lr: 1e-7
+  eta_min: 1e-7
+  superres_mag: 4
+  cnn_ratio: 4
+  patch_size: 4
+  embed_dim: 256
+  depth: 6
+  decoder_depth: 2
+  num_heads: 4
+  mlp_ratio: 4
+  drop_path: 0.1
+  drop_rate: 0.1
+
+# ---------------------------- DATA -------------------------------------------
+data:
+  low_res_dir: "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/prism-superres/10.0_arcmin/"
+  high_res_dir: "/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/prism-superres/2.5_arcmin/"
+
+  default_vars: [
+    "land_sea_mask",
+    "orography",
+    "lattitude",
+    "prcp",
+    "tmin",
+    "tmax",
+    "2m_temperature",
+    "10m_u_component_of_wind",
+    "10m_v_component_of_wind",
+    "geopotential",
+    "temperature",
+  ]
+
+  dict_in_variables: {
+    'PRISM': [
+      "land_sea_mask",
+      "orography",
+      "lattitude",
+      "prcp",
+      "tmin",
+      "tmax",
+    ],
+  }
+
+
+  out_var_dict: {
+      "t2m": "2m_temperature",
+      "z500": "geopotential_500",
+      "t850": "temperature_850",
+      "u10": "10m_u_component_of_wind",
+      "prcp": "prcp",
+      "tmin": "tmin",
+      "tmax": "tmax",
+  }
+
+
+  out_variable: ["prcp", "tmin"]

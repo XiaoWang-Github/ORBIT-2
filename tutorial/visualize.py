@@ -29,8 +29,6 @@ from climate_learn.data.processing.era5_constants import (
 from climate_learn.models.hub.components.vit_blocks import Block
 from torch.nn import Sequential
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
-from climate_learn.utils.fused_attn import FusedAttn
-
 
 
 
@@ -269,7 +267,7 @@ fsdp_size = world_size //tensor_par_size
 simple_ddp_size = 1
 seq_par_size = 1
 
-FusedAttn_option = FusedAttn.DEFAULT 
+
 
 low_res_dir = conf['data']['low_res_dir']
 high_res_dir = conf['data']['high_res_dir']
@@ -302,7 +300,7 @@ data_par_size = fsdp_size * simple_ddp_size
 
 if world_rank==0:
     print("max_epochs",max_epochs," ",checkpoint_path," ",pretrain_path," ",low_res_dir," ",high_res_dir,"preset",preset,"dict_out_variables",dict_out_variables,"lr",lr,"beta_1",beta_1,"beta_2",beta_2,"weight_decay",weight_decay,"warmup_epochs",warmup_epochs,"warmup_start_lr",warmup_start_lr,"eta_min",eta_min,"superres_mag",superres_mag,"cnn_ratio",cnn_ratio,"patch_size",patch_size,"embed_dim",embed_dim,"depth",depth,"decoder_depth",decoder_depth,"num_heads",num_heads,"mlp_ratio",mlp_ratio,"drop_path",drop_path,"drop_rate",drop_rate,"batch_size",batch_size,"num_workers",num_workers,"buffer_size",buffer_size,flush=True)
-    print("data_par_size",data_par_size,"fsdp_size",fsdp_size,"simple_ddp_size",simple_ddp_size,"tensor_par_size",tensor_par_size,"seq_par_size",seq_par_size,"FusedAttn_option",FusedAttn_option, flush=True)
+    print("data_par_size",data_par_size,"fsdp_size",fsdp_size,"simple_ddp_size",simple_ddp_size,"tensor_par_size",tensor_par_size,"seq_par_size",seq_par_size,flush=True)
 
 
 #initialize parallelism groups
@@ -310,7 +308,7 @@ _, data_par_group, tensor_par_group, _, fsdp_group, _ = init_par_groups(data_par
 
 
 
-model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'tensor_par_size':tensor_par_size, 'tensor_par_group':tensor_par_group,'FusedAttn_option':FusedAttn_option}
+model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'tensor_par_size':tensor_par_size, 'tensor_par_group':tensor_par_group}
 
 
 if world_rank==0:
@@ -324,7 +322,7 @@ if preset!="vit" and preset!="res_slimvit":
 
 
 # Set up data
-data_key = "ERA5_1"
+data_key = "DAYMET_1"
 
 in_vars = dict_in_variables[data_key]
 out_vars = dict_out_variables[data_key]
@@ -338,6 +336,25 @@ if world_rank==0:
 
 
 #load data module
+
+dm = cl.data.IterDataModule(
+    "downscaling",
+    low_res_dir[data_key],
+    high_res_dir[data_key],
+    in_vars,
+    out_vars=out_vars,
+    data_par_size = data_par_size,
+    data_par_group = data_par_group,
+    subsample=1,
+    batch_size=1,
+    buffer_size=buffer_size,
+    num_workers=num_workers,
+    div=div,
+    overlap=overlap,
+).to(device)
+
+dm.setup()
+
 data_module = cl.data.IterDataModule(
     "downscaling",
     low_res_dir[data_key], 
@@ -392,7 +409,7 @@ denorm = test_transforms[0]
 
 print("denorm is ",denorm,flush=True)
 
-pretrain_path = "./checkpoints/climate/interm_epoch_6.ckpt"
+pretrain_path = "./checkpoints/climate/interm_epoch_168.ckpt"
 
 # load from pretrained model weights
 load_checkpoint_pretrain(model, pretrain_path,tensor_par_size=tensor_par_size,tensor_par_group=tensor_par_group)
@@ -464,7 +481,7 @@ cl.utils.visualize.visualize_at_index(
     out_list=out_vars,
     in_transform=denorm,
     out_transform=denorm,
-    variable="2m_temperature_max",
+    variable="total_precipitation_24hr",
     src=data_key,
     device = device,
     div=div,
@@ -472,6 +489,227 @@ cl.utils.visualize.visualize_at_index(
     index=0,  # visualize the first sample of the test set
     tensor_par_size=tensor_par_size,
     tensor_par_group=tensor_par_group,
+    outputdir = "checkpoints/result"
 )
 
 dist.destroy_process_group()
+
+import os
+import copy
+import pandas as pd
+import glob
+import numpy as np
+import scipy.stats as stats
+from scipy.stats import gaussian_kde
+from skimage.metrics import structural_similarity as ssim
+from skimage.metrics import peak_signal_noise_ratio as psnr
+
+import seaborn as sns
+import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib import colors
+from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.colors import LinearSegmentedColormap
+
+import cartopy
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+
+# %load_ext autoreload
+# %autoreload 2
+from taylor import TaylorDiagram
+from metrics import *
+from psd import psd
+
+VARIABLE_NAMES= {
+    # "prcp" : 'prcp'
+    "total_precipitation_24hr": "total_precipitation_24hr"
+}
+
+def get_lat_weight(latitudes):
+    # Convert latitudes to radians and compute weights
+    lat_radians = np.deg2rad(latitudes)
+    weights = np.cos(lat_radians).clip(0., 1.)
+    print("Mean", np.mean(weights))
+    return weights
+
+#lats = np.load("/lustre/orion/lrn036/world-shared/kurihana/regridding/dataset/datasets/ERA5-Daymet-1dy-superres/3.75_arcmin/lat.npy")
+lats = np.load("/lustre/orion/lrn036/world-shared/data/superres/daymet/2.5_arcmin//lat.npy")
+lat_weights = get_lat_weight(lats)
+lat_weights = lat_weights[..., np.newaxis]
+lat_weights.shape
+
+#lons = np.load("/lustre/orion/lrn036/world-shared/kurihana/regridding/dataset/datasets/ERA5-Daymet-1dy-superres/3.75_arcmin/lon.npy")
+lons = np.load("/lustre/orion/lrn036/world-shared/data/superres/daymet/2.5_arcmin//lon.npy")
+
+basedatadir = "/lustre/orion/lrn036/world-shared/patrickfan/super-res-torchlight/tutorial/checkpoints/result"
+
+variables = ['total_precipitation_24hr']
+loss_metrics =  ['mse', 'imagegradient']
+
+import time
+import glob
+import os
+
+def get_data(truth_or_pred):
+    Var = {}
+    s1 = time.time()
+
+    filelist = sorted(glob.glob(os.path.join(basedatadir, f"{truth_or_pred}*.npy")))
+
+    if len(filelist) == 0:
+        print(f"No files found for {truth_or_pred}")
+        return Var  # Return an empty dictionary
+
+    data_array = None
+    for idx, ifile in enumerate(filelist):
+        data = np.load(ifile).astype(np.float32)
+
+        if idx == 0:
+            data_array = data
+        else:
+            data_array = np.concatenate([data_array, data], axis=0)
+
+    Var[variables[0]] = data_array  # Use the first variable in the list
+    return Var
+
+# Predict data
+Preds = {}
+# Preds = get_data('preds')
+
+
+Truths = {}
+# Truths = get_data('truth')
+
+Preds[variables[0]]= np.load(os.path.join(basedatadir, "preds.npy"))
+Truths[variables[0]] = np.load(os.path.join(basedatadir, "truth.npy"))
+
+
+def quantile_rmse(x, y, q):
+    """
+        x: pred
+        y: truth
+        q: 0 - 1. 1,2,3 sigma = 0.6827, 0.9545, 0.9973
+    """
+    #0.6827, 0.9545, 0.9973
+    index = np.where(y>=np.quantile(y, q))
+    rmse =  np.sqrt(np.mean(np.square(x[index] -  y[index] )))
+    return rmse
+
+def normalize(float_array,vmax, vmin ):
+    # Normalize the array to range [0, 1]
+    norm_array = (float_array - vmin) / (vmax - vmin)
+
+    # Scale and convert to integers in range [0, 255]
+    int_array = (norm_array * 255).astype(np.uint8)
+    return int_array
+
+Metrics = {}
+for (k, preds), (_, truths) in zip(Preds.items(),  Truths.items()):
+
+    corrs = np.array([])
+    wrmses = np.array([])
+    s1rmses = np.array([])
+    s2rmses = np.array([])
+    s3rmses = np.array([])
+    ssim_scores = np.array([])
+    psnr_scores = np.array([])
+
+    for pred, truth in zip(preds, truths ):
+
+        corr = clim_pearsoner(x_sim=pred, x_obs=truth )
+        wrmse = lat_weight_rmse(x_sim=pred, x_obs=truth, lat_weights=lat_weights)
+        corrs = np.append(corrs, corr)
+        wrmses = np.append(wrmses, wrmse)
+
+        # >1, 2, 3 sigma rmses
+        s1, s2, s3 = 0.6827, 0.9545, 0.9973
+        s1rmse = quantile_rmse(pred, truth, s1)
+        s2rmse = quantile_rmse(pred, truth, s2)
+        s3rmse = quantile_rmse(pred, truth, s3)
+        s1rmses = np.append(s1rmses, s1rmse)
+        s2rmses = np.append(s2rmses, s2rmse)
+        s3rmses = np.append(s3rmses, s3rmse)
+
+        # transformation
+        vmin = min(np.nanmin(pred), np.nanmin(truth))
+        vmax = max(np.nanmax(pred), np.nanmax(truth))
+        pred= normalize(pred, vmax=vmax, vmin=vmin)
+        truth= normalize(truth, vmax=vmax, vmin=vmin)
+
+        # calc
+        _ssim = ssim(pred, truth)
+        _psnr = psnr(pred,truth)
+        ssim_scores = np.append(ssim_scores, _ssim)
+        psnr_scores = np.append(psnr_scores, _psnr)
+
+
+    # Add mean
+    corr_mean =  np.mean(corrs)
+    wrmse_mean= np.mean(wrmses)
+    ssim_mean = np.mean(ssim_scores)
+    psnr_mean = np.mean(psnr_scores)
+    s1rmse_mean = np.mean(s1rmses)
+    s2rmse_mean = np.mean(s2rmses)
+    s3rmse_mean = np.mean(s3rmses)
+
+    # store at dict
+    Metrics[k] = {
+        'corr': corr_mean,  'rmse': wrmse_mean,
+        "rmse_sigma1": s1rmse_mean,
+        "rmse_sigma2": s2rmse_mean,
+        "rmse_sigma3": s3rmse_mean,
+        'ssim': ssim_mean, 'psnr': psnr_mean
+    }
+
+
+df = pd.DataFrame(Metrics)
+
+print (df)
+
+for column in df.columns:
+    print(f"{column}:")
+    print(df[column])
+    print("-" * 40)  # Separator for better readability
+
+# df.to_csv("metrics.csv", index=True)
+
+
+nsamples = 1 #NOTE: max 365 i.e. the length of 2021
+
+
+def calc_RALSD(truths, preds, nsamples=-1):
+    return np.sqrt(np.mean(np.square(10*np.log(psd(truths[:nsamples])[0].mean() /
+                                    psd(preds[:nsamples])[0].mean()))) )
+
+
+RALSDs = {}
+for (k, truths), (_, preds) in zip(Truths.items(), Preds.items()):
+    s1 = time.time()
+    RALSDs[k] = calc_RALSD(truths, preds, nsamples=nsamples)
+    print(f"DONE {k} {(time.time() - s1)/60.0 } [min]")
+
+
+print(RALSDs)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

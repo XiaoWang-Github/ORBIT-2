@@ -5,8 +5,9 @@
 #SBATCH --gres=gpu:8
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
-#SBATCH -t 00:10:00
+#SBATCH -t 00:30:00
 #SBATCH -p batch
+#SBATCH -q debug
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.out
 
@@ -52,7 +53,7 @@ export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
 
 export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 
-time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_1b.yaml
+time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/inference.yaml
 
 #time srun -n $((SLURM_JOB_NUM_NODES*1)) python ./visualize.py ../configs/interm_117m.yaml
 #time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_8m.yaml
