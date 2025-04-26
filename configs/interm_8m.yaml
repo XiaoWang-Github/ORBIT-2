@@ -5,7 +5,7 @@ trainer:
   checkpoint_folder: "climate"
   pretrain:
   batch_size: 64
-  buffer_size: 500
+  buffer_size: 600
   num_workers: 2
   data_type: bfloat16
   train_loss: "bayesian_tv"
@@ -79,13 +79,13 @@ data:
     "GCM-CNRM": "/lustre/orion/world-shared/lrn036/data/superres/GCM-CNRM-ESM2-1/10.0_arcmin",
     "GCM-MPI": "/lustre/orion/world-shared/lrn036/data/superres/GCM-MPI-ESM1-2-HR/10.0_arcmin/",
     "GCM-MRI": "/lustre/orion/world-shared/lrn036/data/superres/GCM-MRI-ESM2-0/10.0_arcmin/",
-    "GCM-NorESM2-MM ": "/lustre/orion/world-shared/lrn036/data/superres/GCM-NorESM2-MM/10.0_arcmin/",
+    "GCM-NorESM2": "/lustre/orion/world-shared/lrn036/data/superres/GCM-NorESM2-MM/10.0_arcmin/",
     "RegCM-ACCESS": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-ACCESS-CM2/10.0_arcmin",
     "RegCM-BCC": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-BCC-CSM2-MR/10.0_arcmin",
     "RegCM-CNRM": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-CNRM-ESM2-1/10.0_arcmin",
     "RegCM-MPI": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-MPI-ESM1-2-HR/10.0_arcmin/",
     "RegCM-MRI": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-MRI-ESM2-0/10.0_arcmin/",
-    "RegCM-NorESM2-MM ": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-NorESM2-MM/10.0_arcmin/",
+    "RegCM-NorESM2": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-NorESM2-MM/10.0_arcmin/",
     "DAYMET_1": "/lustre/orion/lrn036/world-shared/data/superres/daymet/10.0_arcmin",
 #    'DAYMET_2': "/lustre/orion/lrn036/world-shared/data/superres/daymet/2.0_arcmin",
 # old datasets

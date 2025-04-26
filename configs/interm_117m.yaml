@@ -5,7 +5,7 @@ trainer:
   checkpoint_folder: "interm_117m"
   pretrain: 
   batch_size: 32 
-  buffer_size: 600
+  buffer_size: 700
   num_workers: 2
   data_type: bfloat16
   train_loss: "bayesian_tv"
@@ -14,7 +14,7 @@ trainer:
 #----------  Parallelism -------------
 parallelism:
   fsdp: 16
-  simple_ddp: 1024
+  simple_ddp: 2048
   tensor_par: 1
   seq_par: 1
  
