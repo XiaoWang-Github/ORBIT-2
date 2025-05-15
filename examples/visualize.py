@@ -324,7 +324,7 @@ if preset!="vit" and preset!="res_slimvit":
 
 
 # Set up data
-data_key = "ERA5_2"
+data_key = "PRISM"
 
 in_vars = dict_in_variables[data_key]
 out_vars = dict_out_variables[data_key]
@@ -336,6 +336,13 @@ if world_rank==0:
  
 
 
+# HJY: retrieve image pixel widths and heights
+in_height = len(np.load(os.path.join(low_res_dir[data_key], "lat.npy")))
+in_width = len(np.load(os.path.join(low_res_dir[data_key], "lon.npy")))
+out_height = len(np.load(os.path.join(high_res_dir[data_key], "lat.npy")))
+out_width = len(np.load(os.path.join(high_res_dir[data_key], "lon.npy")))
+
+
 
 #load data module
 data_module = cl.data.IterDataModule(
@@ -344,6 +351,10 @@ data_module = cl.data.IterDataModule(
     high_res_dir[data_key],
     in_vars,
     out_vars=out_vars,
+    in_width=in_width,
+    in_height=in_height,
+    out_width=out_width,
+    out_height=out_height,
     data_par_size = data_par_size,
     data_par_group = data_par_group,
     subsample=1,
@@ -365,6 +376,10 @@ dm_vis = cl.data.IterDataModule(
     high_res_dir[data_key],
     in_vars,
     out_vars=out_vars,
+    in_width=in_width,
+    in_height=in_height,
+    out_width=out_width,
+    out_height=out_height,
     data_par_size = data_par_size,
     data_par_group = data_par_group,
     subsample=1,
@@ -395,7 +410,8 @@ denorm = test_transforms[0]
 
 print("denorm is ",denorm,flush=True)
 
-pretrain_path = "/lustre/orion/lrn036/world-shared/xf9/downscale_checkpoint/intermediate_117m.ckpt"
+#pretrain_path = "/lustre/orion/lrn036/world-shared/xf9/downscale_checkpoint/intermediate_117m.ckpt"
+pretrain_path = "./checkpoints/climate/interm_epoch_2.ckpt"
 
 # load from pretrained model weights
 load_checkpoint_pretrain(model, pretrain_path,tensor_par_size=tensor_par_size,tensor_par_group=tensor_par_group)

@@ -37,6 +37,10 @@ class IterDataModule(torch.nn.Module):
         out_root_dir,
         in_vars,
         out_vars,
+        in_width,
+        in_height,
+        out_width,
+        out_height,
         data_par_size: int = 1,
         data_par_group=None,
         src=None,
@@ -60,6 +64,10 @@ class IterDataModule(torch.nn.Module):
         self.out_root_dir = out_root_dir
         self.in_vars = in_vars
         self.out_vars = out_vars
+        self.in_width = in_width
+        self.in_height = in_height
+        self.out_width = out_width
+        self.out_height = out_height
         self.subsample = subsample
         self.buffer_size = buffer_size
         self.batch_size = batch_size
@@ -132,11 +140,6 @@ class IterDataModule(torch.nn.Module):
         return self.in_vars, out_vars
 
     def get_data_dims(self):
-        in_lat = len(np.load(os.path.join(self.inp_root_dir, "lat.npy")))
-        in_lon = len(np.load(os.path.join(self.inp_root_dir, "lon.npy")))
-        out_lat = len(np.load(os.path.join(self.out_root_dir, "lat.npy")))
-        out_lon = len(np.load(os.path.join(self.out_root_dir, "lon.npy")))
-
         forecasting_tasks = [
             "direct-forecasting",
             "iterative-forecasting",
@@ -148,15 +151,15 @@ class IterDataModule(torch.nn.Module):
                     self.batch_size,
                     self.history,
                     len(self.in_vars),
-                    out_lat,
-                    out_lon,
+                    self.out_height,
+                    self.out_width,
                 ]
             )
             ##TODO: change out size
             out_vars = copy.deepcopy(self.out_vars)
             if "2m_temperature_extreme_mask" in out_vars:
                 out_vars.remove("2m_temperature_extreme_mask")
-            out_size = torch.Size([self.batch_size, len(out_vars), out_lat, out_lon])
+            out_size = torch.Size([self.batch_size, len(out_vars), self.out_height, self.out_width])
 
         elif self.task == "downscaling":
             if self.overlap % 2 == 0:
@@ -171,13 +174,13 @@ class IterDataModule(torch.nn.Module):
             #hoverlap = self.overlap * 2
             #voverlap = self.overlap
             if self.div == 1:
-                wid = in_lon
+                wid = self.in_width
             else:
-                wid = in_lon // self.div + left + right
+                wid = self.in_width // self.div + left + right
             if self.div == 1:
-                hgt = in_lat
+                hgt = self.in_height
             else:
-                hgt = in_lat // self.div + top + bottom
+                hgt = self.in_height // self.div + top + bottom
             in_size = torch.Size(
                 [self.batch_size, len(self.in_vars), hgt, wid]
             )
@@ -186,13 +189,13 @@ class IterDataModule(torch.nn.Module):
             if "2m_temperature_extreme_mask" in out_vars:
                 out_vars.remove("2m_temperature_extreme_mask")
             if self.div == 1:
-                wid = out_lon
+                wid = self.out_width
             else:
-                wid = out_lon // self.div + ( left + right ) * (out_lon//in_lon)
+                wid = self.out_width // self.div + ( left + right ) * (self.out_width//self.in_width)
             if self.div == 1:
-                hgt = out_lat
+                hgt = self.out_height
             else:
-                hgt = out_lat // self.div + ( top + bottom ) * (out_lat//in_lat)
+                hgt = self.out_height // self.div + ( top + bottom ) * (self.out_height//self.in_height)
             out_size = torch.Size(
                 [self.batch_size, len(out_vars), hgt, wid]
             )
