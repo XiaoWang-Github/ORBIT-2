@@ -20,6 +20,9 @@ import random
 import time
 import numpy as np
 import yaml
+from scipy.stats import pearsonr
+from sklearn.metrics import r2_score
+from scipy.ndimage import zoom
 
 from climate_learn.data.processing.era5_constants import (
     PRESSURE_LEVEL_VARS,
@@ -324,7 +327,7 @@ if preset!="vit" and preset!="res_slimvit":
 
 
 # Set up data
-data_key = "ERA5_2"
+data_key = "ERA5_DAYMET"
 
 in_vars = dict_in_variables[data_key]
 out_vars = dict_out_variables[data_key]
@@ -395,7 +398,7 @@ denorm = test_transforms[0]
 
 print("denorm is ",denorm,flush=True)
 
-pretrain_path = "/lustre/orion/lrn036/world-shared/xf9/downscale_checkpoint/intermediate_117m.ckpt"
+pretrain_path = "/lustre/orion/csc662/proj-shared/xxiao/my_super_res_project/examples/checkpoints/climate/interm_epoch_48.ckpt"
 
 # load from pretrained model weights
 load_checkpoint_pretrain(model, pretrain_path,tensor_par_size=tensor_par_size,tensor_par_group=tensor_par_group)
@@ -478,3 +481,108 @@ cl.utils.visualize.visualize_at_index(
 )
 
 dist.destroy_process_group()
+
+def nanflatten(x):
+    """Flatten and remove nan values"""
+    y = x.flatten()
+    mask = np.isfinite(y)
+    return y[mask]
+
+def get_lat_weight(latitudes):
+    """Calculate latitude weights"""
+    lat_radians = np.deg2rad(latitudes)
+    weights = np.cos(lat_radians).clip(0.0, 1.0)
+    return weights
+
+def lat_weight_rmse(x_sim, x_obs, lat_weights):
+    """Calculate weighted RMSE"""
+    error_squared = (x_sim - x_obs) ** 2
+    weighted_error = error_squared * lat_weights
+    weighted_error_filtered = nanflatten(weighted_error)
+    rmse = np.sqrt(np.mean(weighted_error_filtered))
+    return rmse
+
+def quantile_rmse(x, y, q):
+    """Calculate RMSE for a specific quantile"""
+    index = np.where(y >= np.nanquantile(y, q))
+    rmse = np.sqrt(np.mean(np.square(x[index] - y[index])))
+    return rmse
+
+def visualize_at_index(
+    model,
+    data_module,
+    dm_vis,
+    out_list,
+    in_transform,
+    out_transform,
+    variable,
+    src,
+    device,
+    div=1,
+    overlap=0,
+    index=0,
+    tensor_par_size=1,
+    tensor_par_group=None,
+):
+    # ... existing visualization code ...
+    
+    # Calculate additional metrics
+    pred_np = pred.cpu().numpy()
+    truth_np = y.cpu().numpy()
+    
+    # Get latitude weights
+    lats = np.linspace(24, 53.75, 120)  # For Daymet
+    lat_weights = get_lat_weight(lats)
+    lat_weights = lat_weights[..., np.newaxis]
+    
+    # Calculate metrics
+    corr = pearsonr(nanflatten(truth_np), nanflatten(pred_np))[0]
+    wrmse = lat_weight_rmse(pred_np, truth_np, lat_weights)
+    rmse = lat_weight_rmse(pred_np, truth_np, np.ones_like(lat_weights))
+    
+    # Quantile RMSEs
+    s1, s2, s3 = 0.6827, 0.9545, 0.9973
+    s1rmse = quantile_rmse(pred_np, truth_np, s1)
+    s2rmse = quantile_rmse(pred_np, truth_np, s2)
+    s3rmse = quantile_rmse(pred_np, truth_np, s3)
+    
+    # R2 score
+    r2 = r2_score(nanflatten(truth_np), nanflatten(pred_np))
+    
+    # Print all metrics with clear formatting
+    print("\n" + "="*50)
+    print("Evaluation Metrics Summary")
+    print("="*50)
+    print(f"Pearson Correlation: {corr:.4f}")
+    print(f"RMSE: {rmse:.4f}")
+    print(f"Weighted RMSE: {wrmse:.4f}")
+    print(f"1σ RMSE: {s1rmse:.4f}")
+    print(f"2σ RMSE: {s2rmse:.4f}")
+    print(f"3σ RMSE: {s3rmse:.4f}")
+    print(f"SSIM: {ssim_score:.4f}")
+    print(f"PSNR: {psnr_score:.4f}")
+    print(f"R² Score: {r2:.4f}")
+    print("="*50 + "\n")
+    
+    # ... rest of the visualization code ...
+
+    # Calculate additional metrics
+    pred_norm = (pred - vmin) / (vmax - vmin)
+    truth_norm = (truth - vmin) / (vmax - vmin)
+
+    # Calculate RMSE
+    rmse = np.sqrt(np.mean((pred - truth) ** 2))
+    
+    # Calculate Pearson Correlation
+    pred_flat = pred.flatten()
+    truth_flat = truth.flatten()
+    valid_mask = ~np.isnan(pred_flat) & ~np.isnan(truth_flat)
+    pearson_corr = np.corrcoef(pred_flat[valid_mask], truth_flat[valid_mask])[0,1]
+    
+    # Calculate Mean Bias
+    mean_bias = np.mean(pred - truth)
+
+    print(f"Goodness of fit: PSNR {psnr_score:.6f}, SSIM {ssim_score:.6f}")
+    print(f"RMSE: {rmse:.6f}")
+    print(f"Pearson Correlation: {pearson_corr:.6f}")
+    print(f"Mean Bias: {mean_bias:.6f}")

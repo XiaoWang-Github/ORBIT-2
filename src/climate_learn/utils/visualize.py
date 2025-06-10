@@ -12,6 +12,7 @@ from climate_learn.data.processing.era5_constants import (
     CONSTANTS
 )
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+import os
 
 
 def min_max_normalize(data):
@@ -35,8 +36,10 @@ def clip_replace_constant(y, yhat, out_variables):
 
 
 
-def visualize_at_index(mm, dm, dm_vis, out_list, in_transform, out_transform,variable, src, device, div, overlap,index=0, tensor_par_size=1,tensor_par_group=None):
-
+def visualize_at_index(mm, dm, dm_vis, out_list, in_transform, out_transform,variable, src, device, div, overlap,index=0, tensor_par_size=1,tensor_par_group=None, output_dir="visualization_output"):
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
     lat, lon = dm.get_lat_lon()
     extent = [lon.min(), lon.max(), lat.min(), lat.max()]
     out_channel = dm.out_vars.index(variable)
@@ -319,7 +322,7 @@ def visualize_at_index(mm, dm, dm_vis, out_list, in_transform, out_transform,var
     plt.imshow(inputs,cmap='coolwarm',vmin=img_min,vmax=img_max)
     anim = None
     plt.show()
-    name = str(torch.distributed.get_rank())+ '_input.png' 
+    name = os.path.join(output_dir, f"{torch.distributed.get_rank()}_input.png")
     plt.savefig(name)
 
     print("img.shape",inputs.shape,"min",img_min,"max",img_max,flush=True)
@@ -333,9 +336,9 @@ def visualize_at_index(mm, dm, dm_vis, out_list, in_transform, out_transform,var
     plt.figure(figsize=(preds.shape[1]/100,preds.shape[0]/100))
     plt.imshow(preds,cmap='coolwarm',vmin=img_min,vmax=img_max)
     plt.show()
-    name = str(torch.distributed.get_rank())+'_prediction.png'
+    name = os.path.join(output_dir, f"{torch.distributed.get_rank()}_prediction.png")
     plt.savefig(name)
-    np.save(str(torch.distributed.get_rank())+'_preds.npy', preds )
+    np.save(os.path.join(output_dir, f"{torch.distributed.get_rank()}_preds.npy"), preds)
 
 
     print("ppred.shape",preds.shape,"min",ppred_min,"max",ppred_max,flush=True)
@@ -350,9 +353,9 @@ def visualize_at_index(mm, dm, dm_vis, out_list, in_transform, out_transform,var
         plt.figure(figsize=(groundtruths.shape[1]/100,groundtruths.shape[0]/100))
         plt.imshow(groundtruths,cmap='coolwarm',vmin=img_min,vmax=img_max)
         plt.show()
-        name = str(torch.distributed.get_rank())+'_truth.png'
+        name = os.path.join(output_dir, f"{torch.distributed.get_rank()}_truth.png")
         plt.savefig(name)
-        np.save(str(torch.distributed.get_rank())+'_truth.npy', groundtruths )
+        np.save(os.path.join(output_dir, f"{torch.distributed.get_rank()}_truth.npy"), groundtruths)
 
 
     
