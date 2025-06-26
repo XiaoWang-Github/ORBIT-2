@@ -24,6 +24,12 @@ from .processing.era5_constants import PRECIP_VARIABLES
 from .precipmodule import LogTransform
 
 from climate_learn.dist.distdataset import *
+from torch.utils.data import SubsetRandomSampler
+from torch.utils.data.distributed import DistributedSampler
+
+def nsplit(a, n):
+    k, m = divmod(len(a), n)
+    return (a[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n))
 
 
 class IterDataModule(torch.nn.Module):
@@ -52,7 +58,7 @@ class IterDataModule(torch.nn.Module):
         num_workers=0,
         pin_memory=False,
         div=1,
-        overlap=4,
+        overlap=0,
     ):
         super().__init__()
         self.task = task
@@ -387,10 +393,10 @@ class IterDataModule(torch.nn.Module):
         # print("use_ddstore is :", use_ddstore, flush=True)
 
         if use_ddstore:
-            ## assume: a GPU is mapped by the local rank
-            gpu_id = int(os.getenv("SLURM_LOCALID", "0"))
-            os.environ["FABRIC_IFACE"] = f"hsn{gpu_id//2}"
-            print("FABRIC_IFACE:", os.environ["FABRIC_IFACE"])
+            # ## assume: a GPU is mapped by the local rank
+            # gpu_id = int(os.getenv("SLURM_LOCALID", "0"))
+            # os.environ["FABRIC_IFACE"] = f"hsn{gpu_id//2}"
+            # print("FABRIC_IFACE:", os.environ["FABRIC_IFACE"])
 
             data_group_size = self.data_par_size
             data_group_rank = dist.get_rank(group=self.data_par_group)
@@ -398,21 +404,42 @@ class IterDataModule(torch.nn.Module):
             trainset = DistDataset(
                 self.data_train,
                 "trainset",
-                data_par_group = self.data_par_group,
+                group = self.data_par_group,
                 )
 
-            sampler = torch.utils.data.distributed.DistributedSampler(trainset, num_replicas=data_par_size, rank=data_group_rank, shuffle=True)
+            ddstore_sampler = os.getenv("ORBIT_DDSTORE_SAMPLER", "local") ## 0: global 1:local
+            if data_group_rank == 0:
+                print("DDStore sampler:", ddstore_sampler)
+            if ddstore_sampler == "global":
+                sampler = DistributedSampler(trainset, num_replicas=data_group_size, rank=data_group_rank, shuffle=True)
+            elif ddstore_sampler == "local":
+                rx = list(nsplit(range(len(trainset)), data_group_size))[data_group_rank]
+                sampler = SubsetRandomSampler(rx)
 
-            train_loader = DDStoreDataLoader(
-            # train_loader = torch.utils.data.DataLoader(
-                trainset.ddstore,
-                trainset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                drop_last=True,
-                sampler=sampler,
-                collate_fn=collate_fn,
-            )
+            ddstore_method = int(os.getenv("ORBIT_DDSTORE_METHOD", "1"))
+            if data_group_rank == 0:
+                print("ORBIT_DDSTORE_METHOD:", ddstore_method)
+            if ddstore_method == 0:
+                train_loader = DDStoreDataLoader(
+                    trainset.ddstore,
+                    trainset,
+                    batch_size=self.batch_size,
+                    shuffle=False,
+                    drop_last=True,
+                    sampler=sampler,
+                    collate_fn=collate_fn,
+                )
+            else:
+                ## multi-thread
+                train_loader = HydraDataLoader(
+                    trainset,
+                    batch_size=self.batch_size,
+                    shuffle=False,
+                    drop_last=True,
+                    num_workers=self.num_workers,
+                    sampler=sampler,
+                    collate_fn=collate_fn,
+                )
 
             return train_loader
 

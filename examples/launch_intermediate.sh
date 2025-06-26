@@ -48,15 +48,13 @@ export PYTHONNOUSERSITE=1
 export OMP_NUM_THREADS=7
 export PYTHONPATH=$PWD/../src:$PYTHONPATH
 
-export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
-
 export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 
-time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-python ./intermediate_downscaling.py ../configs/interm_117m.yaml
-
 #time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-#python ./intermediate_downscaling.py ../configs/interm_8m.yaml
+#python ./intermediate_downscaling.py ../configs/interm_117m.yaml
+
+time srun -n $((SLURM_JOB_NUM_NODES*8)) -c 7 \
+python -u ./intermediate_downscaling.py ../configs/interm_8m.yaml
 
 
 #time srun -n $((SLURM_JOB_NUM_NODES*8)) \
