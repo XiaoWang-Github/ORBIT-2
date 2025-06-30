@@ -20,6 +20,13 @@ except:
 import re
 import os
 
+from torch.utils.data.dataloader import _DatasetKind
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+import multiprocessing as mp
+import queue
+import socket
+import logging
+
 
 def dict2list(x, variables):
     xlist = list()
@@ -59,6 +66,127 @@ class DDStoreDataLoader(DataLoader):
     def collate_fn(self, batch):
         return super().collate_fn(batch)
 
+## Credit: HydraGNN
+class HydraDataLoader(DataLoader):
+    """
+    A custom data loader with multi-threading on a HPC system.
+    This is to overcome a few problems (affinity, hanging, crashing, etc)
+    with Pytorch's multi-threaded DataLoader on Summit and Perlmutter.
+    (2022/08) jyc: This is a work-in-progress version. Performance is not verified.
+    """
+
+    def __init__(self, dataset, **kwargs):
+        super(HydraDataLoader, self).__init__(dataset, **kwargs)
+        self._dataset_fetcher = _DatasetKind.create_fetcher(
+            self._dataset_kind,
+            self.dataset,
+            self._auto_collation,
+            self.collate_fn,
+            self.drop_last,
+        )
+
+        ## List of threads job (futures)
+        self.fs = queue.Queue()
+
+        logging.debug("num_workers:", self.num_workers)
+        logging.debug("len:", len(self._index_sampler))
+
+    @staticmethod
+    def worker_init(counter):
+        core_width = 1
+        if os.getenv("HYDRAGNN_AFFINITY_WIDTH") is not None:
+            core_width = int(os.environ["HYDRAGNN_AFFINITY_WIDTH"])
+
+        core_offset = 1
+        if os.getenv("HYDRAGNN_AFFINITY_OFFSET") is not None:
+            core_offset = int(os.environ["HYDRAGNN_AFFINITY_OFFSET"])
+
+        with counter.get_lock():
+            wid = counter.value
+            counter.value += 1
+
+        affinity = None
+        if hasattr(os, "sched_getaffinity"):
+            affinity_check = os.getenv("HYDRAGNN_AFFINITY")
+            if affinity_check == "OMP":
+                affinity = parse_omp_places(os.getenv("OMP_PLACES"))
+            else:
+                affinity = list(os.sched_getaffinity(0))
+
+            affinity_mask = set(
+                affinity[
+                    core_width * wid
+                    + core_offset : core_width * (wid + 1)
+                    + core_offset
+                ]
+            )
+            os.sched_setaffinity(0, affinity_mask)
+            affinity = os.sched_getaffinity(0)
+
+        hostname = socket.gethostname()
+        logging.debug(
+            f"Worker: pid={os.getpid()} hostname={hostname} ID={wid} affinity={affinity}"
+        )
+        return 0
+
+    @staticmethod
+    def fetch(dataset, ibatch, index, pin_memory=False):
+        batch = [dataset[i] for i in index]
+        # hostname = socket.gethostname()
+        # log (f"Worker done: pid={os.getpid()} hostname={hostname} ibatch={ibatch}")
+        # data = Batch.from_data_list(batch) ## for pytorch geometric
+        if pin_memory:
+            data = torch.utils.data._utils.pin_memory.pin_memory(data)
+        return (ibatch, batch)
+
+    def __iter__(self):
+        logging.debug("Iterator reset")
+        ## Check previous futures
+        if self.fs.qsize() > 0:
+            logging.debug("Clearn previous futures:", self.fs.qsize())
+            for future in iter(self.fs.get, None):
+                future.cancel()
+
+        ## Resetting
+        self._num_yielded = 0
+        self._sampler_iter = iter(self._index_sampler)
+        self.fs_iter = iter(self.fs.get, None)
+        counter = mp.Value("i", 0)
+        executor = ThreadPoolExecutor(
+            max_workers=self.num_workers,
+            initializer=self.worker_init,
+            initargs=(counter,),
+        )
+        for i in range(len(self._index_sampler)):
+            index = next(self._sampler_iter)
+            future = executor.submit(
+                self.fetch,
+                self.dataset,
+                i,
+                index,
+                pin_memory=self.pin_memory,
+            )
+            self.fs.put(future)
+        self.fs.put(None)
+        # log ("Submit all done.")
+        return self
+
+    def __next__(self):
+        # log ("Getting next", self._num_yielded)
+        future = next(self.fs_iter)
+        ibatch, data = future.result()
+        # log (f"Future done: ibatch={ibatch}", data.num_graphs)
+        self._num_yielded += 1
+        if self.collate_fn is not None:
+            data = self.collate_fn(data)
+        return data
+
+    def clean(self):
+        if self.fs.qsize() > 0:
+            logging.debug("Clearn previous futures:", self.fs.qsize())
+            for future in iter(self.fs.get, None):
+                future.cancel()
+
 
 class DistDataset(Dataset):
     """Distributed dataset class"""
@@ -67,7 +195,7 @@ class DistDataset(Dataset):
         self,
         dataset,
         label,
-        ddp_group=None,
+        group=None,
         comm=MPI.COMM_WORLD,
         ddstore_width=None,
     ):
@@ -76,14 +204,17 @@ class DistDataset(Dataset):
         self.datasetlist = list()
         self.label = label
 
-        self.ddp_group = ddp_group
+        self.group = group
 
         self.world_rank = dist.get_rank()
         self.world_size = dist.get_world_size()
 
-        data_par_rank = dist.get_rank(group=self.ddp_group)
+        data_par_rank = dist.get_rank(group=self.group)
+        data_par_size = dist.get_world_size(group=self.group)
+        n_data_par_group = self.world_size // data_par_size
+        assert self.world_size % data_par_size == 0
 
-        color = 0
+        color = self.world_rank % n_data_par_group
         self.comm = comm.Split(color, self.world_rank)
         self.rank = self.comm.Get_rank()
         self.comm_size = self.comm.Get_size()
@@ -116,13 +247,32 @@ class DistDataset(Dataset):
             self.ddstore_comm_size,
         )
 
-        ddstore_method = int(os.getenv("ORBIT_DDSTORE_METHOD", "0"))
-        gpu_id = int(os.getenv("SLURM_LOCALID"))
-        os.environ["FABRIC_IFACE"] = f"hsn{gpu_id//2}"
+        ddstore_method = int(os.getenv("ORBIT_DDSTORE_METHOD", "1"))
+
+        system = os.getenv("LMOD_SYSTEM_NAME", "none")
+        if system == "frontier" and self.world_size > 1:
+            ## Set local_rank to match Frontier GPU mapping: https://docs.olcf.ornl.gov/systems/frontier_user_guide.html#frontier-compute-nodes
+            local_rank = int(os.getenv("SLURM_LOCALID", "0"))
+            local_rank_map = {
+                0: 4,
+                1: 5,
+                2: 2,
+                3: 3,
+                4: 6,
+                5: 7,
+                6: 0,
+                7: 1,
+            }
+            gpu_id = local_rank_map[local_rank]
+            os.environ["FABRIC_IFACE"] = f"hsn{gpu_id//2}"
+        else:
+            gpu_id = 0
+            os.environ["FABRIC_IFACE"] = f"hsn{gpu_id//2}"
+
         print("DDStore method:", ddstore_method)
         print("FABRIC_IFACE:", os.environ["FABRIC_IFACE"])
 
-        self.ddstore = dds.PyDDStore(self.ddstore_comm)
+        self.ddstore = dds.PyDDStore(self.ddstore_comm, method=ddstore_method)
 
         ## register local data
         ## Assume variables and out_variables are same for all

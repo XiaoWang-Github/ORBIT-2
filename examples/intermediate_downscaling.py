@@ -43,7 +43,7 @@ from climate_learn.dist.profile import *
 
 def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, cp_save_path, tensor_par_size=1,tensor_par_group=None):
     world_rank = dist.get_rank()
-    local_rank = int(os.environ['SLURM_LOCALID'])
+    local_rank = int(os.getenv('SLURM_LOCALID','0'))
 
     #load model checkpoint
     if checkpoint_path is not None and world_rank < tensor_par_size:
@@ -382,9 +382,9 @@ def seed_everything(seed):
 
 def main(device):
 
-    world_size = int(os.environ['SLURM_NTASKS'])
+    world_size = int(os.getenv('SLURM_NTASKS','1'))
     world_rank = dist.get_rank()
-    local_rank = int(os.environ['SLURM_LOCALID'])
+    local_rank = int(os.getenv('SLURM_LOCALID','0'))
 
 
     print("world_size",world_size,"world_rank",world_rank,"local_rank",local_rank,flush=True)
@@ -404,6 +404,9 @@ def main(device):
     data_type = conf['trainer']['data_type']
     train_loss_str = conf['trainer']['train_loss'] 
     pretrain_path = conf['trainer']['pretrain']
+    use_ddstore = conf['trainer'].get('use_ddstore', False)
+    if use_ddstore:
+        os.environ["ORBIT_USE_DDSTORE"] = "1"
 
     fsdp_size = conf['parallelism']['fsdp'] 
     simple_ddp_size = conf['parallelism']['simple_ddp']
@@ -500,6 +503,37 @@ def main(device):
         if world_rank==0:
             print("initialize ShardedGradScaler for bfloat16",flush=True)
 
+    ## setup data module
+    data_module_list = dict()
+    train_dataloader_list = dict()
+    val_dataloader_list = dict()
+    for data_key in low_res_dir.keys():
+        in_vars = dict_in_variables[data_key]
+        out_vars = dict_out_variables[data_key]
+
+        #load data module
+        data_module = cl.data.IterDataModule(
+            "downscaling",
+            low_res_dir[data_key],
+            high_res_dir[data_key],
+            in_vars,
+            out_vars=out_vars,
+            data_par_size = data_par_size,
+            data_par_group = data_par_group,
+            subsample=1,
+            batch_size=batch_size,
+            buffer_size=buffer_size,
+            num_workers=num_workers,
+            div=div,
+            overlap=overlap,
+        ).to(device)
+
+        data_module.setup()
+        data_module_list[data_key] = data_module
+
+        train_dataloader_list[data_key] = data_module.train_dataloader()
+        val_dataloader_list[data_key] = data_module.val_dataloader()
+
     while (epoch_start+interval_epochs) < max_epochs:
 
         for data_key in low_res_dir.keys():
@@ -517,24 +551,25 @@ def main(device):
                 print("default_vars",default_vars,flush=True)
                 print("before data_module torch.cuda.memory_reserved: %fGB"%(torch.cuda.memory_reserved(device)/1024/1024/1024),flush=True)
     
-            #load data module
-            data_module = cl.data.IterDataModule(
-                "downscaling",
-                low_res_dir[data_key],
-                high_res_dir[data_key],
-                in_vars,
-                out_vars=out_vars,
-                data_par_size = data_par_size,
-                data_par_group = data_par_group,
-                subsample=1,
-                batch_size=batch_size,
-                buffer_size=buffer_size,
-                num_workers=num_workers,
-                div=div,
-                overlap=overlap,
-            ).to(device)
+            # #load data module
+            # data_module = cl.data.IterDataModule(
+            #     "downscaling",
+            #     low_res_dir[data_key],
+            #     high_res_dir[data_key],
+            #     in_vars,
+            #     out_vars=out_vars,
+            #     data_par_size = data_par_size,
+            #     data_par_group = data_par_group,
+            #     subsample=1,
+            #     batch_size=batch_size,
+            #     buffer_size=buffer_size,
+            #     num_workers=num_workers,
+            #     div=div,
+            #     overlap=overlap,
+            # ).to(device)
 
-            data_module.setup()
+            # data_module.setup()
+            data_module = data_module_list[data_key]
 
             if do_tiling:
                 lat, lon = data_module.get_lat_lon()
@@ -678,14 +713,15 @@ def main(device):
             #get latitude and longitude
             lat, lon = data_module.get_lat_lon()
     
-            # get train data loader
-            train_dataloader = data_module.train_dataloader()
+            # # get train data loader
+            # train_dataloader = data_module.train_dataloader()
     
-            # get validation data loader
-            val_dataloader = data_module.val_dataloader()
-    
-    
-    
+            # # get validation data loader
+            # val_dataloader = data_module.val_dataloader()
+
+            # train and validation data loader. Use pre-loaded ones
+            train_dataloader = train_dataloader_list[data_key]
+            val_dataloader = val_dataloader_list[data_key]
     
             ## GPTL Timer
             #dist.barrier()
@@ -839,12 +875,12 @@ if __name__ == "__main__":
 
     os.environ['MASTER_ADDR'] = str(os.environ['HOSTNAME'])
     os.environ['MASTER_PORT'] = "29500"
-    os.environ['WORLD_SIZE'] = os.environ['SLURM_NTASKS']
-    os.environ['RANK'] = os.environ['SLURM_PROCID']
+    os.environ['WORLD_SIZE'] = os.getenv('SLURM_NTASKS','1')
+    os.environ['RANK'] = os.getenv('SLURM_PROCID','0')
 
-    world_size = int(os.environ['SLURM_NTASKS'])
-    world_rank = int(os.environ['SLURM_PROCID'])
-    local_rank = int(os.environ['SLURM_LOCALID'])
+    world_size = int(os.getenv('SLURM_NTASKS','1'))
+    world_rank = int(os.getenv('SLURM_PROCID','0'))
+    local_rank = int(os.getenv('SLURM_LOCALID','0'))
 
     torch.cuda.set_device(local_rank)
     device = torch.cuda.current_device()

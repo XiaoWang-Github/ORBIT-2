@@ -8,6 +8,7 @@ trainer:
   num_workers: 2
   data_type: bfloat16
   train_loss: "bayesian_tv"
+  use_ddstore: False
 
 #----------  Parallelism -------------
 parallelism:
