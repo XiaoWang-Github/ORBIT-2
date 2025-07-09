@@ -56,6 +56,7 @@ class NpyReader(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         num_workers_per_ddp = worker_info.num_workers if worker_info is not None else 1
         total_num_workers = num_workers_per_ddp * self.data_par_size
+        print("worker_info, num_workers_per_ddp:", worker_info, num_workers_per_ddp)
 
 
         if n_files < total_num_workers:

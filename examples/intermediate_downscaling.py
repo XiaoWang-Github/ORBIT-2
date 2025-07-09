@@ -301,7 +301,7 @@ def training_step(
         loss = losses
     else:  # per channel + aggregate
         loss = losses[-1]
-        
+
     return loss
 
 
@@ -408,6 +408,12 @@ def main(device):
     tensor_par_size = conf['parallelism']['tensor_par']
     seq_par_size = conf['parallelism']['seq_par']
 
+    ## JYC: adjust simple_ddp_size
+    if fsdp_size * simple_ddp_size * seq_par_size * tensor_par_size != world_size:
+        simple_ddp_size = world_size // (fsdp_size * seq_par_size * tensor_par_size)
+        print("Reset simple_ddp_size:", simple_ddp_size)
+        assert fsdp_size * simple_ddp_size * seq_par_size * tensor_par_size == world_size
+
     try:
         do_tiling = conf['tiling']['do_tiling']
         if do_tiling:
@@ -498,6 +504,10 @@ def main(device):
         if world_rank==0:
             print("initialize ShardedGradScaler for bfloat16",flush=True)
 
+    ## GPTL Timer
+    dist.barrier()
+    timer = ProfileTimer(device)
+
     ## setup data module
     data_module_list = dict()
     train_dataloader_list = dict()
@@ -507,6 +517,7 @@ def main(device):
         out_vars = dict_out_variables[data_key]
 
         #load data module
+        timer.begin(f"{data_key}_data_init")
         data_module = cl.data.IterDataModule(
             "downscaling",
             low_res_dir[data_key],
@@ -522,6 +533,7 @@ def main(device):
             div=div,
             overlap=overlap,
         ).to(device)
+        timer.end(f"{data_key}_data_init")
 
         data_module.setup()
         data_module_list[data_key] = data_module
@@ -718,10 +730,6 @@ def main(device):
             train_dataloader = train_dataloader_list[data_key]
             val_dataloader = val_dataloader_list[data_key]
     
-            ## GPTL Timer
-            #dist.barrier()
-            #timer = ProfileTimer()
-    
             #perform training
     
             epoch_end = epoch_start+interval_epochs
@@ -731,24 +739,24 @@ def main(device):
         
                 #tell the model that we are in train mode. Matters because we have the dropout
                 model.train()
-                #timer.begin("epoch")
+                timer.begin("epoch")
                 loss = 0.0
                 epoch_loss = torch.tensor(0.0 , dtype=torch.float32, device=device)
                 if world_rank==0:
                     print("epoch ",epoch,flush=True)
     
-                #timer.begin("dataload")
+                timer.begin("dataload")
                 for batch_idx, batch in enumerate(train_dataloader):
-                #timer.end("dataload")
+                    timer.end("dataload")
     
                     if world_rank==0:
                         torch.cuda.synchronize(device=device)
                         tic1 = time.perf_counter() 
     
-                    #timer.begin("training_step")
+                    timer.begin("training_step")
                     ## torch.Size([64, 20, 32, 64]), torch.Size([64, 1, 128, 256])
                     loss = training_step(batch, batch_idx,model,device,var_weights,train_loss)
-                    #timer.end("training_step")
+                    timer.end("training_step")
     
                     epoch_loss += loss.detach()
         
@@ -756,25 +764,29 @@ def main(device):
                         print("epoch: ",epoch,"batch_idx",batch_idx,"world_rank",world_rank," loss ",loss,flush=True)
         
                     optimizer.zero_grad()
-                    #timer.begin("backward")
 
                     if data_type == "float32":
+                        timer.begin("backward")
                         loss.backward()
-                        #timer.end("backward")
-                        #timer.begin("optimizer_step")
+                        timer.end("backward")
+                        timer.begin("optimizer_step")
                         optimizer.step()
-                        #timer.end("optimizer_step")
+                        timer.end("optimizer_step")
                     else:
                         # Scales loss.  Calls backward() on scaled loss to create scaled gradients.
+                        timer.begin("backward")
                         scaler.scale(loss).backward()
+                        timer.end("backward")
                         # scaler.step() first unscales gradients of the optimizer's params.
                         # If gradients don't contain infs/NaNs, optimizer.step() is then called,
                         # otherwise, optimizer.step() is skipped.
+                        timer.begin("optimizer_step")
                         scaler.step(optimizer)
                         # Updates the scale for next iteration.
                         scaler.update()
                         if scaler._scale <min_scale:
                             scaler._scale = torch.tensor(min_scale).to(scaler._scale)
+                        timer.end("optimizer_step")
 
    
                     
@@ -786,10 +798,13 @@ def main(device):
                         torch.cuda.synchronize(device=device)
                         tic4 = time.perf_counter() 
                         print(f"my rank {dist.get_rank()}. tic4-tic1 in {(tic4-tic1):0.4f} seconds\n",flush=True)
+
+                    timer.begin("dataload")
+                timer.end("dataload")
     
     
                 scheduler.step()
-                #timer.end("epoch")
+                timer.end("epoch")
         
                 if world_rank==0:
                     print("epoch: ",epoch," epoch_loss ",epoch_loss,flush=True)
@@ -862,6 +877,9 @@ def main(device):
     
             if first_time_bool:
                 first_time_bool = False
+
+    timer.dump()
+    timer.finalize()
     
 
 
@@ -886,15 +904,6 @@ if __name__ == "__main__":
 
     print("Using dist.init_process_group. world_size ",world_size,flush=True)
 
-    ## GPTL timer init
-    #gp.initialize()
-
     main(device)
-
-    ## GPTL timer output
-    #output_dir = os.getenv("OUTPUT_DIR", "")
-    #gp.pr_file(os.path.join(output_dir, f"gp_timing.p{world_rank}"))
-    #gp.pr_summary_file(os.path.join(output_dir, "gp_timing.summary"))
-    #gp.finalize()
 
     dist.destroy_process_group()
