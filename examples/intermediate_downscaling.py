@@ -40,6 +40,10 @@ from climate_learn.utils.fused_attn import FusedAttn
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
 from climate_learn.dist.profile import *
 
+import subprocess
+omnistat_dir = os.environ.get("OMNISTAT_DIR", "")
+enable_omnistat = True
+
 
 def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, cp_save_path, tensor_par_size=1,tensor_par_group=None):
     world_rank = dist.get_rank()
@@ -709,6 +713,9 @@ def main(device):
                 #timer.begin("dataload")
                 for batch_idx, batch in enumerate(train_dataloader):
                 #timer.end("dataload")
+                    if enable_omnistat and dist.get_rank() == 0:
+                        marker = f"batch-{batch_idx}"
+                        subprocess.run([f"{omnistat_dir}/omnistat-annotate", "--mode", "start", "--text", marker])
     
                     if world_rank==0:
                         torch.cuda.synchronize(device=device)
@@ -755,6 +762,10 @@ def main(device):
                         torch.cuda.synchronize(device=device)
                         tic4 = time.perf_counter() 
                         print(f"my rank {dist.get_rank()}. tic4-tic1 in {(tic4-tic1):0.4f} seconds\n",flush=True)
+
+                    if enable_omnistat and dist.get_rank() == 0:
+                        marker = f"batch-{batch_idx}"
+                        subprocess.run([f"{omnistat_dir}/omnistat-annotate", "--mode", "stop"])
     
     
                 scheduler.step()
