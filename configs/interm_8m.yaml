@@ -4,15 +4,15 @@ trainer:
   checkpoint: 
   pretrain:
   batch_size: 32
-  buffer_size: 400
+  buffer_size: 10 #400
   num_workers: 2
   data_type: bfloat16
   train_loss: "bayesian_tv"
 
 #----------  Parallelism -------------
 parallelism:
-  fsdp: 4
-  simple_ddp: 4
+  fsdp: 8
+  simple_ddp: 1
   tensor_par: 1
   seq_par: 1
 
