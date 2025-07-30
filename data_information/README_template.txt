@@ -1,4 +1,4 @@
-﻿This readme file was generated on 2025-07-28 by Aristeidis Tsaris
+This readme file was generated on 2025-07-28 by Aristeidis Tsaris
 
 GENERAL INFORMATION
 
@@ -47,7 +47,7 @@ SHARING/ACCESS INFORMATION
 
 4. Links/relationships to ancillary data sets: N/A
 
-5. Was data derived from another source? If yes, list source(s): https://www.ecmwf.int/en/forecasts/dataset/ecmwf-reanalysis-v5
+5. Was data derived from another source? If yes, list source(s): Yes https://www.ecmwf.int/en/forecasts/dataset/ecmwf-reanalysis-v5, and the original data have separate licensing.
 
 6. Recommended citation for this dataset: 
 
@@ -57,11 +57,11 @@ DATA & FILE OVERVIEW
 1. File List: 
 <list all files (or folders, as appropriate for dataset organization) contained in the dataset>
 
-2. Relationship between files: 
+2. Relationship between files: All the file are inpependent
 
-3. Additional related data collected that was not included in the current data package: 
+3. Additional related data collected that was not included in the current data package: N/A
 
-4. Are there multiple versions of this dataset? If yes, what files were updated and why?
+4. Are there multiple versions of this dataset? If yes, what files were updated and why? No
 
 
 METHODOLOGICAL INFORMATION
