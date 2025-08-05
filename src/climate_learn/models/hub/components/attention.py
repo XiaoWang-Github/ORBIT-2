@@ -55,7 +55,8 @@ class Attention(nn.Module):
             x = xformers.ops.memory_efficient_attention(
                 q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
                 p=self.attn_drop.p,
-                op=xformers.ops.MemoryEfficientAttentionCkOp
+		op=xformers.ops.MemoryEfficientAttentionFlashAttentionOp
+                #op=xformers.ops.MemoryEfficientAttentionCkOp
                 # MemoryEfficientAttentionCkOp seems to work fine for now
                 #op=xformers.ops.MemoryEfficientAttentionSplitKCkOp
                 #op=xformers.ops.MemoryEfficientAttentionFlashAttentionOp
@@ -152,7 +153,8 @@ class VariableMapping_Attention(nn.Module):
             x = xformers.ops.memory_efficient_attention(
                 q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
                 p=self.attn_drop.p,
-                op=xformers.ops.MemoryEfficientAttentionCkOp
+		op=xformers.ops.MemoryEfficientAttentionFlashAttentionOp
+                #op=xformers.ops.MemoryEfficientAttentionCkOp
                 #op=xformers.ops.MemoryEfficientAttentionSplitKCkOp
                 #op=xformers.ops.MemoryEfficientAttentionFlashAttentionOp
                 #op=xformers.ops.fmha.MemoryEfficientAttentionCkOp

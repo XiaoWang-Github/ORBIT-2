@@ -23,7 +23,7 @@ from .iterdataset import (
 from .processing.era5_constants import PRECIP_VARIABLES
 from .precipmodule import LogTransform
 
-from climate_learn.dist.distdataset import *
+#from climate_learn.dist.distdataset import *
 
 
 class IterDataModule(torch.nn.Module):
