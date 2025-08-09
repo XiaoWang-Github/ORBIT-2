@@ -1,15 +1,16 @@
 #!/bin/bash
-#SBATCH -A LRN036
+#SBATCH -A g200
 #SBATCH -J flash
-#SBATCH --nodes=64
-#SBATCH --gres=gpu:8
-#SBATCH --ntasks-per-node=8
-#SBATCH --cpus-per-task=7
-#SBATCH -t 00:30:00
-#SBATCH -q debug
+#SBATCH --nodes=1
+#SBATCH --gpus-per-node=4
+#SBATCH --ntasks-per-node=4
+#SBATCH --cpus-per-task=72
+#SBATCH -t 00:10:00
+#SBATCH -p debug
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.error
-#SBATCH -C nvme
+#SBATCH --uenv=pytorch/v2.6.0:/user-environment
+#SBATCH --view=default
 
 [ -z $JOBID ] && JOBID=$SLURM_JOB_ID
 [ -z $JOBSIZE ] && JOBSIZE=$SLURM_JOB_NUM_NODES
@@ -17,72 +18,72 @@
 
 ulimit -n 262144
 
+export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
+# OPENMP Environment Variables
+export OMP_NUM_THREADS=64
 
-source ~/miniconda3/etc/profile.d/conda.sh
+#load environment
+#source /capstor/store/cscs/userlab/g200/xf9/orbit_env/bin/activate
 
-module load PrgEnv-gnu
-module load rocm/6.2.4
-module unload darshan-runtime
-module unload libfabric
+export MASTER_ADDR=$(scontrol show hostnames $SLURM_NODELIST | head -n 1)
+export MASTER_PORT=29500
+export WORLD_SIZE=$SLURM_NPROCS
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1 
+export TRITON_HOME=/dev/shm/
 
-#start of sbcast
-echo "copying env to each node in the job"
-sbcast -pf /lustre/orion/lrn036/world-shared/xf9/torch26.tar.gz /mnt/bb/${USER}/torch26.tar.gz
-if [ ! "$?" == "0" ]; then
-    # CHECK EXIT CODE. When SBCAST fails, it may leave partial files on the compute nodes, and if you continue to launch srun,
-    # your application may pick up partially complete shared library files, which would give you confusing errors.
-    echo "SBCAST failed!"
-    exit 1
-fi
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+#################################
+# MPICH environment variables   #
+#################################
+export MPICH_GPU_SUPPORT_ENABLED=0 
 
-# Untar the environment file (only need 1 task per node to do this)
-srun -N $SLURM_JOB_NUM_NODES --ntasks-per-node 1 mkdir /mnt/bb/${USER}/torch26
-echo "untaring env"
-srun -N $SLURM_JOB_NUM_NODES --ntasks-per-node 1 tar -xzf /mnt/bb/${USER}/torch26.tar.gz -C  /mnt/bb/${USER}/torch26
+#################################
+# CUDA environment variables    #
+#################################
+export CUDA_CACHE_DISABLE=1
 
-# Unpack the env
-source activate /mnt/bb/${USER}/torch26
-srun -N $SLURM_JOB_NUM_NODES --ntasks-per-node 1 conda-unpack
+############################################
+# NCCL and Fabric environment variables    #
+############################################
 
-##### END OF SBCAST AND CONDA-UNPACK #####
+# This forces NCCL to use the libfabric plugin, enabling full use of the
+# Slingshot network. If the plugin can not be found, applications will fail to
+# start. With the default value, applications would instead fall back to e.g.
+# TCP, which would be significantly slower than with the plugin. More information
+# about `NCCL_NET` can be found at:
+# https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html#nccl-net
+export NCCL_NET="AWS Libfabric"
+# Use GPU Direct RDMA when GPU and NIC are on the same NUMA node. More
+# information about `NCCL_NET_GDR_LEVEL` can be found at:
+# https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html#nccl-net-gdr-level-formerly-nccl-ib-gdr-level
+export NCCL_NET_GDR_LEVEL=PHB
+export NCCL_CROSS_NIC=1
+# These `FI` (libfabric) environment variables have been found to give the best
+# performance on the Alps network across a wide range of applications. Specific
+# applications may perform better with other values.
+export FI_CXI_DEFAULT_CQ_SIZE=131072
+export FI_CXI_DEFAULT_TX_SIZE=32768
+export FI_CXI_DISABLE_HOST_REGISTER=1
+export FI_CXI_RX_MATCH_MODE=software
+export FI_MR_CACHE_MONITOR=userfaultfd
 
 
-
-
-## DDStore and GPTL Timer
-
-module use -a /lustre/orion/world-shared/lrn036/jyc/frontier/sw/modulefiles
-module load libfabric/1.22.0p
-
-
-export NCCL_PROTO=Simple
+#export NCCL_PROTO=Simple
 export HOSTNAME=$(hostname)
 export PYTHONNOUSERSITE=1
 
 
-#Needed to bypass MIOpen, Disk I/O Error
-
-export MIOPEN_USER_DB_PATH=/tmp/$JOBID
-export MIOPEN_CUSTOM_CACHE_DIR=${MIOPEN_USER_DB_PATH}
-#rm -rf ${MIOPEN_USER_DB_PATH}
-srun -N $SLURM_JOB_NUM_NODES --ntasks-per-node 1 mkdir -p ${MIOPEN_USER_DB_PATH}
-
-export MIOPEN_DEBUG_AMD_WINOGRAD_MPASS_WORKSPACE_MAX=-1
-export MIOPEN_DEBUG_AMD_MP_BD_WINOGRAD_WORKSPACE_MAX=-1
-
-export MIOPEN_DEBUG_CONV_WINOGRAD=0
-
-export OMP_NUM_THREADS=7
 export PYTHONPATH=$PWD/../src:$PYTHONPATH
 
 export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
 
-export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 
-
-
-#time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-#python ./intermediate_downscaling.py ../configs/interm_8m.yaml
+srun -n $((SLURM_JOB_NUM_NODES*4))  bash -c "
+    export RANK=\$SLURM_PROCID
+    export LOCAL_RANK=\$SLURM_LOCALID
+    . /capstor/store/cscs/userlab/g200/xf9/orbit_env/bin/activate 
+    python ./intermediate_downscaling.py ../configs/interm_8m.yaml
+"
 
 
 
@@ -92,8 +93,8 @@ export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 #time srun -n $((SLURM_JOB_NUM_NODES*8)) \
 #python ./intermediate_downscaling.py ../configs/interm_1b.yaml
 
-time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-python ./intermediate_downscaling.py ../configs/interm_10b.yaml
+#time srun -n $((SLURM_JOB_NUM_NODES*8)) \
+#python ./intermediate_downscaling.py ../configs/interm_10b.yaml
 
 
 
