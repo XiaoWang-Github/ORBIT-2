@@ -38,12 +38,20 @@ from climate_learn.models.hub.components.cnn_blocks import (
     ResidualBlock
 )
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed, interpolate_pos_embed_adaptive
-from climate_learn.dist.profile import *
+#from climate_learn.dist.profile import *
+
+from climate_learn.utils.fused_attn import FusedAttn
 
 
 def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, cp_save_path, adaptive_patching, tensor_par_size=1,tensor_par_group=None):
     world_rank = dist.get_rank()
-    local_rank = int(os.environ['SLURM_LOCALID'])
+    
+    slocal_rank = int(os.environ['SLURM_LOCALID'])
+
+
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+
+    print("world_rank",world_rank,"slocal_rank",slocal_rank,"local_rank",local_rank,flush=True)
 
     #load model checkpoint
     if checkpoint_path is not None and world_rank < tensor_par_size:
@@ -473,9 +481,9 @@ def main(device):
 
 
     if adaptive_patching:
-        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'tensor_par_size':tensor_par_size, 'tensor_par_group':tensor_par_group,'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key],'smooth':smooth[data_key],'canny_tol':canny_tol[data_key]}
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'tensor_par_size':tensor_par_size, 'tensor_par_group':tensor_par_group,'adaptive_patching':adaptive_patching,'fixed_length':fixed_length[data_key],'smooth':smooth[data_key],'canny_tol':canny_tol[data_key],'FusedAttn_option':FusedAttn.DEFAULT}
     else:
-        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'tensor_par_size':tensor_par_size, 'tensor_par_group':tensor_par_group,'adaptive_patching':adaptive_patching,'fixed_length':fixed_length,'smooth':smooth,'canny_tol':canny_tol}
+        model_kwargs = {'default_vars':default_vars,'superres_mag':superres_mag,'cnn_ratio':cnn_ratio,'patch_size':patch_size,'embed_dim':embed_dim,'depth':depth,'decoder_depth':decoder_depth,'num_heads':num_heads,'mlp_ratio':mlp_ratio,'drop_path':drop_path,'drop_rate':drop_rate, 'tensor_par_size':tensor_par_size, 'tensor_par_group':tensor_par_group,'adaptive_patching':adaptive_patching,'fixed_length':fixed_length,'smooth':smooth,'canny_tol':canny_tol,'FusedAttn_option':FusedAttn.DEFAULT}
 
 
     if world_rank==0:
@@ -831,22 +839,33 @@ def main(device):
 
 if __name__ == "__main__":
 
-    os.environ['MASTER_ADDR'] = str(os.environ['HOSTNAME'])
-    os.environ['MASTER_PORT'] = "29500"
-    os.environ['WORLD_SIZE'] = os.environ['SLURM_NTASKS']
-    os.environ['RANK'] = os.environ['SLURM_PROCID']
+    #os.environ['MASTER_ADDR'] = str(os.environ['HOSTNAME'])
+    #os.environ['MASTER_PORT'] = "29500"
+    #os.environ['WORLD_SIZE'] = os.environ['SLURM_NTASKS']
+    #os.environ['RANK'] = os.environ['SLURM_PROCID']
 
     world_size = int(os.environ['SLURM_NTASKS'])
     world_rank = int(os.environ['SLURM_PROCID'])
-    local_rank = int(os.environ['SLURM_LOCALID'])
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
+
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "Not Set")
+    print("CUDA_VISIBLE_DEVICES: ",cuda_visible_devices," local_rank",local_rank,flush=True)
+    print("CUDA available",torch.cuda.is_available(),flush=True)
+    print("device count",torch.cuda.device_count(),flush=True)
+    print("get device name",torch.cuda.get_device_name(0),flush=True)
+
+    dist.init_process_group('nccl', timeout=timedelta(seconds=7200000), rank=world_rank, world_size=world_size)
     torch.cuda.set_device(local_rank)
     device = torch.cuda.current_device()
 
+ 
+    print(f"Current CUDA device ID: {torch.cuda.current_device()}",flush=True)
+ 
 
-    dist.init_process_group('nccl', timeout=timedelta(seconds=7200000), rank=world_rank, world_size=world_size)
+    print("current_device",device,"local_rank",local_rank,flush=True)
 
-
+  
     print("Using dist.init_process_group. world_size ",world_size,flush=True)
 
     ## GPTL timer init
