@@ -6,8 +6,8 @@ from climate_learn.utils.dist_functions import F_Identity_B_AllReduce, F_Identit
 from climate_learn.utils.fused_attn import FusedAttn
 import torch.distributed as dist
 
-import xformers
-from xformers.components.attention.core import scaled_dot_product_attention as xformers_sdpa
+#import xformers
+#from xformers.components.attention.core import scaled_dot_product_attention as xformers_sdpa
 
 class Attention(nn.Module):
     def __init__(
@@ -64,6 +64,7 @@ class Attention(nn.Module):
                 #op=xformers.ops.MemoryEfficientAttentionOp
             )
         elif self.fused_attn == FusedAttn.DEFAULT:
+
             x = F.scaled_dot_product_attention(
                 q, k, v,
                 dropout_p=self.attn_drop.p if self.training else 0.,
@@ -141,7 +142,6 @@ class VariableMapping_Attention(nn.Module):
 
         q = self.q(var_query).reshape(B, N_a, self.num_heads // self.tensor_par_size, self.head_dim ).permute(0, 2, 1, 3)
 
-        #print("var_query.shape",var_query.shape,"self.q",self.q,"q.shape",q.shape,flush=True)
 
         kv = self.kv(x).reshape(B, N_i, 2, self.num_heads // self.tensor_par_size, self.head_dim).permute(2, 0, 3, 1, 4)
 
@@ -160,6 +160,7 @@ class VariableMapping_Attention(nn.Module):
                 #op=xformers.ops.MemoryEfficientAttentionOp
             )
         elif self.fused_attn == FusedAttn.DEFAULT:
+
             x = F.scaled_dot_product_attention(
                 q, k, v,
                 dropout_p=self.attn_drop.p if self.training else 0.,
