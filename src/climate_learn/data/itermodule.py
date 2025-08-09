@@ -23,8 +23,6 @@ from .iterdataset import (
 from .processing.era5_constants import PRECIP_VARIABLES
 from .precipmodule import LogTransform
 
-from climate_learn.dist.distdataset import *
-
 
 class IterDataModule(torch.nn.Module):
     """ClimateLearn's iter data module interface. Encapsulates dataset/task-specific
@@ -387,35 +385,8 @@ class IterDataModule(torch.nn.Module):
         # print("use_ddstore is :", use_ddstore, flush=True)
 
         if use_ddstore:
-            ## assume: a GPU is mapped by the local rank
-            gpu_id = int(os.getenv("SLURM_LOCALID", "0"))
-            os.environ["FABRIC_IFACE"] = f"hsn{gpu_id//2}"
-            print("FABRIC_IFACE:", os.environ["FABRIC_IFACE"])
-
-            data_group_size = self.data_par_size
-            data_group_rank = dist.get_rank(group=self.data_par_group)
-
-            trainset = DistDataset(
-                self.data_train,
-                "trainset",
-                data_par_group = self.data_par_group,
-                )
-
-            sampler = torch.utils.data.distributed.DistributedSampler(trainset, num_replicas=data_par_size, rank=data_group_rank, shuffle=True)
-
-            train_loader = DDStoreDataLoader(
-            # train_loader = torch.utils.data.DataLoader(
-                trainset.ddstore,
-                trainset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                drop_last=True,
-                sampler=sampler,
-                collate_fn=collate_fn,
-            )
-
-            return train_loader
-
+            sys.exit("DDStore Not Implemented")
+      
         return DataLoader(
             self.data_train,
             batch_size=self.batch_size,
