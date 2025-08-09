@@ -46,12 +46,10 @@ from climate_learn.utils.fused_attn import FusedAttn
 def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, cp_save_path, adaptive_patching, tensor_par_size=1,tensor_par_group=None):
     world_rank = dist.get_rank()
     
-    slocal_rank = int(os.environ['SLURM_LOCALID'])
+    local_rank = int(os.environ['SLURM_LOCALID'])
 
 
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-
-    print("world_rank",world_rank,"slocal_rank",slocal_rank,"local_rank",local_rank,flush=True)
+    print("world_rank",world_rank,"local_rank",local_rank,flush=True)
 
     #load model checkpoint
     if checkpoint_path is not None and world_rank < tensor_par_size:
@@ -839,31 +837,18 @@ def main(device):
 
 if __name__ == "__main__":
 
-    #os.environ['MASTER_ADDR'] = str(os.environ['HOSTNAME'])
-    #os.environ['MASTER_PORT'] = "29500"
-    #os.environ['WORLD_SIZE'] = os.environ['SLURM_NTASKS']
-    #os.environ['RANK'] = os.environ['SLURM_PROCID']
+    os.environ['MASTER_ADDR'] = str(os.environ['HOSTNAME'])
+    os.environ['MASTER_PORT'] = "29500"
+    os.environ['WORLD_SIZE'] = os.environ['SLURM_NTASKS']
+    os.environ['RANK'] = os.environ['SLURM_PROCID']
 
     world_size = int(os.environ['SLURM_NTASKS'])
     world_rank = int(os.environ['SLURM_PROCID'])
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-
-
-    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "Not Set")
-    print("CUDA_VISIBLE_DEVICES: ",cuda_visible_devices," local_rank",local_rank,flush=True)
-    print("CUDA available",torch.cuda.is_available(),flush=True)
-    print("device count",torch.cuda.device_count(),flush=True)
-    print("get device name",torch.cuda.get_device_name(0),flush=True)
+    local_rank = int(os.environ['SLURM_LOCALID'])
 
     dist.init_process_group('nccl', timeout=timedelta(seconds=7200000), rank=world_rank, world_size=world_size)
     torch.cuda.set_device(local_rank)
     device = torch.cuda.current_device()
-
- 
-    print(f"Current CUDA device ID: {torch.cuda.current_device()}",flush=True)
- 
-
-    print("current_device",device,"local_rank",local_rank,flush=True)
 
   
     print("Using dist.init_process_group. world_size ",world_size,flush=True)

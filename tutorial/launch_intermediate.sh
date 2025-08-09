@@ -9,8 +9,6 @@
 #SBATCH -p debug
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.error
-#SBATCH --uenv=pytorch/v2.6.0:/user-environment
-#SBATCH --view=default
 
 [ -z $JOBID ] && JOBID=$SLURM_JOB_ID
 [ -z $JOBSIZE ] && JOBSIZE=$SLURM_JOB_NUM_NODES
@@ -23,11 +21,8 @@ export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
 export OMP_NUM_THREADS=64
 
 #load environment
-#source /capstor/store/cscs/userlab/g200/xf9/orbit_env/bin/activate
+source /capstor/store/cscs/userlab/g200/xf9/orbit_env/bin/activate
 
-export MASTER_ADDR=$(scontrol show hostnames $SLURM_NODELIST | head -n 1)
-export MASTER_PORT=29500
-export WORLD_SIZE=$SLURM_NPROCS
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1 
 export TRITON_HOME=/dev/shm/
 
@@ -78,12 +73,9 @@ export PYTHONPATH=$PWD/../src:$PYTHONPATH
 export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
 
 
-srun -n $((SLURM_JOB_NUM_NODES*4))  bash -c "
-    export RANK=\$SLURM_PROCID
-    export LOCAL_RANK=\$SLURM_LOCALID
-    . /capstor/store/cscs/userlab/g200/xf9/orbit_env/bin/activate 
-    python ./intermediate_downscaling.py ../configs/interm_8m.yaml
-"
+srun -n $((SLURM_JOB_NUM_NODES*4))  \
+python ./intermediate_downscaling.py ../configs/interm_8m.yaml
+
 
 
 
