@@ -12,8 +12,8 @@ trainer:
 
 #----------  Parallelism -------------
 parallelism:
-  fsdp: 1
-  simple_ddp: 4
+  fsdp: 4
+  simple_ddp: 1
   tensor_par: 1
   seq_par: 1
 
@@ -74,18 +74,18 @@ data:
 #    'ERA5_1': "/capstor/store/cscs/userlab/g200/era5/1.0_deg/",
 #    'ERA5_2': "/capstor/store/cscs/userlab/g200/era5/1.0_deg/",
     'PRISM': "/capstor/store/cscs/userlab/g200/prism/10.0_arcmin",
-##    "GCM-ACCESS": "/lustre/orion/world-shared/lrn036/data/superres/GCM-ACCESS-CM2/10.0_arcmin",
-#    "GCM-BCC": "/lustre/orion/world-shared/lrn036/data/superres/GCM-BCC-CSM2-MR/10.0_arcmin",
-#    "GCM-CNRM": "/lustre/orion/world-shared/lrn036/data/superres/GCM-CNRM-ESM2-1/10.0_arcmin",
-#    "GCM-MPI": "/lustre/orion/world-shared/lrn036/data/superres/GCM-MPI-ESM1-2-HR/10.0_arcmin/",
-#    "GCM-MRI": "/lustre/orion/world-shared/lrn036/data/superres/GCM-MRI-ESM2-0/10.0_arcmin/",
-#    "GCM-NorESM2": "/lustre/orion/world-shared/lrn036/data/superres/GCM-NorESM2-MM/10.0_arcmin/",
-#    "RegCM-ACCESS": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-ACCESS-CM2/10.0_arcmin",
-#    "RegCM-BCC": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-BCC-CSM2-MR/10.0_arcmin",
-#    "RegCM-CNRM": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-CNRM-ESM2-1/10.0_arcmin",
-#    "RegCM-MPI": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-MPI-ESM1-2-HR/10.0_arcmin/",
-#    "RegCM-MRI": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-MRI-ESM2-0/10.0_arcmin/",
-#    "RegCM-NorESM2": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-NorESM2-MM/10.0_arcmin/",
+##    "GCM-ACCESS": "/capstor/store/cscs/userlab/g200/GCM-ACCESS-CM2/10.0_arcmin",
+#    "GCM-BCC": "/capstor/store/cscs/userlab/g200/GCM-BCC-CSM2-MR/10.0_arcmin",
+#    "GCM-CNRM": "/capstor/store/cscs/userlab/g200/GCM-CNRM-ESM2-1/10.0_arcmin",
+#    "GCM-MPI": "/capstor/store/cscs/userlab/g200/GCM-MPI-ESM1-2-HR/10.0_arcmin/",
+#    "GCM-MRI": "/capstor/store/cscs/userlab/g200/GCM-MRI-ESM2-0/10.0_arcmin/",
+#    "GCM-NorESM2": "/capstor/store/cscs/userlab/g200/GCM-NorESM2-MM/10.0_arcmin/",
+#    "RegCM-ACCESS": "/capstor/store/cscs/userlab/g200/RegCM-ACCESS-CM2/10.0_arcmin",
+#    "RegCM-BCC": "/capstor/store/cscs/userlab/g200/RegCM-BCC-CSM2-MR/10.0_arcmin",
+#    "RegCM-CNRM": "/capstor/store/cscs/userlab/g200/RegCM-CNRM-ESM2-1/10.0_arcmin",
+#    "RegCM-MPI": "/capstor/store/cscs/userlab/g200/RegCM-MPI-ESM1-2-HR/10.0_arcmin/",
+#    "RegCM-MRI": "/capstor/store/cscs/userlab/g200/RegCM-MRI-ESM2-0/10.0_arcmin/",
+#    "RegCM-NorESM2": "/capstor/store/cscs/userlab/g200/RegCM-NorESM2-MM/10.0_arcmin/",
 #    "DAYMET_1": "/capstor/store/cscs/userlab/g200/daymet/10.0_arcmin",
 #    'DAYMET_2': "/capstor/store/cscs/userlab/g200/daymet/2.0_arcmin",
   }
@@ -94,18 +94,18 @@ data:
 #    'ERA5_1': "/capstor/store/cscs/userlab/g200/era5/0.25_deg/",
 #    'ERA5_2': "/capstor/store/cscs/userlab/g200/era5/0.25_deg/",
     'PRISM': "/capstor/store/cscs/userlab/g200/prism/2.5_arcmin",
-#    "GCM-ACCESS": "/lustre/orion/world-shared/lrn036/data/superres/GCM-ACCESS-CM2/2.5_arcmin",
-#    "GCM-BCC": "/lustre/orion/world-shared/lrn036/data/superres/GCM-BCC-CSM2-MR/2.5_arcmin",
-#    "GCM-CNRM": "/lustre/orion/world-shared/lrn036/data/superres/GCM-CNRM-ESM2-1/2.5_arcmin",
-#    "GCM-MPI": "/lustre/orion/world-shared/lrn036/data/superres/GCM-MPI-ESM1-2-HR/2.5_arcmin/",
-#    "GCM-MRI": "/lustre/orion/world-shared/lrn036/data/superres/GCM-MRI-ESM2-0/2.5_arcmin/",
-#    "GCM-NorESM2": "/lustre/orion/world-shared/lrn036/data/superres/GCM-NorESM2-MM/2.5_arcmin/",
-#    "RegCM-ACCESS": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-ACCESS-CM2/2.5_arcmin",
-#    "RegCM-BCC": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-BCC-CSM2-MR/2.5_arcmin",
-#    "RegCM-CNRM": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-CNRM-ESM2-1/2.5_arcmin",
-#    "RegCM-MPI": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-MPI-ESM1-2-HR/2.5_arcmin/",
-#    "RegCM-MRI": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-MRI-ESM2-0/2.5_arcmin/",
-#    "RegCM-NorESM2": "/lustre/orion/world-shared/lrn036/data/superres/RegCM-NorESM2-MM/2.5_arcmin/",
+#    "GCM-ACCESS": "/capstor/store/cscs/userlab/g200/GCM-ACCESS-CM2/2.5_arcmin",
+#    "GCM-BCC": "/capstor/store/cscs/userlab/g200/GCM-BCC-CSM2-MR/2.5_arcmin",
+#    "GCM-CNRM": "/capstor/store/cscs/userlab/g200/GCM-CNRM-ESM2-1/2.5_arcmin",
+#    "GCM-MPI": "/capstor/store/cscs/userlab/g200/GCM-MPI-ESM1-2-HR/2.5_arcmin/",
+#    "GCM-MRI": "/capstor/store/cscs/userlab/g200/GCM-MRI-ESM2-0/2.5_arcmin/",
+#    "GCM-NorESM2": "/capstor/store/cscs/userlab/g200/GCM-NorESM2-MM/2.5_arcmin/",
+#    "RegCM-ACCESS": "/capstor/store/cscs/userlab/g200/RegCM-ACCESS-CM2/2.5_arcmin",
+#    "RegCM-BCC": "/capstor/store/cscs/userlab/g200/RegCM-BCC-CSM2-MR/2.5_arcmin",
+#    "RegCM-CNRM": "/capstor/store/cscs/userlab/g200/RegCM-CNRM-ESM2-1/2.5_arcmin",
+#    "RegCM-MPI": "/capstor/store/cscs/userlab/g200/RegCM-MPI-ESM1-2-HR/2.5_arcmin/",
+#    "RegCM-MRI": "/capstor/store/cscs/userlab/g200/RegCM-MRI-ESM2-0/2.5_arcmin/",
+#    "RegCM-NorESM2": "/capstor/store/cscs/userlab/g200/RegCM-NorESM2-MM/2.5_arcmin/",
 #    "DAYMET_1": "/capstor/store/cscs/userlab/g200/daymet/2.5_arcmin",
 #    'DAYMET_2': "/capstor/store/cscs/userlab/g200/daymet/0.5_arcmin",
   }
