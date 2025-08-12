@@ -2,14 +2,11 @@
 #SBATCH -A g200
 #SBATCH -J flash
 #SBATCH --nodes=1
-##SBATCH --gpus-per-task=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=72
 #SBATCH -t 00:10:00
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.error
-
-#source /capstor/store/cscs/userlab/g200/ilyngaas/my-venv-2/bin/activate
 
 [ -z $JOBID ] && JOBID=$SLURM_JOB_ID
 [ -z $JOBSIZE ] && JOBSIZE=$SLURM_JOB_NUM_NODES
@@ -41,4 +38,4 @@ EOF
 
 chmod +x run-cmd.sh
 
-srun --environment=${HOME}/.edf/superres-2.toml --container-workdir=$PWD ./run-cmd.sh
+srun --environment=${HOME}/.edf/superres.toml --container-workdir=$PWD ./run-cmd.sh
