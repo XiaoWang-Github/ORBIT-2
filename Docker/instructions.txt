@@ -1,0 +1,42 @@
+cd Docker
+srun --pty --partition=normal bash
+podman build -t superres:25.06 .
+
+#Make a Docker Account online with your personal email at https://hub.docker.com/
+
+podman tag superres:25.06 [DOCKER_USERNAME]/superres:25.06
+
+podman login docker.io
+#username: [DOCKER_USERNAME]
+#password: [DOCKER_PASSWORD]
+
+podman push [DOCKER_USERNAME]/superres:25.05
+cd $SCRATCH
+enroot import docker://[DOCKER_USERNAME]/superres:25.06
+
+#Exit interactive
+exit
+
+cd ../tutorial
+
+mkdir $HOME/.edf
+vim $HOME/.edf/superres.toml
+
+#Create file supperres.toml with following input
+image = "${SCRATCH}/[DOCKER_USERNAME]+superres+25.06.sqsh"
+mounts = ["/capstor"]
+
+[annotations]
+com.hooks.aws_ofi_nccl.enabled = "true"
+com.hooks.aws_ofi_nccl.variant = "cuda12"
+com.hooks.dcgm.enabled = "true"
+
+[env]
+FI_CXI_DISABLE_HOST_REGISTER = "1"
+FI_MR_CACHE_MONITOR = "userfaultfd"
+FI_CXI_DEFAULT_CQ_SIZE = "131072"
+FI_CXI_DEFAULT_TX_SIZE = "32768"
+NCCL_CROSS_NIC = "1"
+NCCL_DEBUG = "WARN"
+
+
