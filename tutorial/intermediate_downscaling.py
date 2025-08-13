@@ -49,7 +49,7 @@ def load_checkpoint_pretrain(model, checkpoint_path, pretrain_path, cp_save_path
     slocal_rank = int(os.environ['SLURM_LOCALID'])
 
 
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = int(os.environ.get("SLURM_LOCALID", 0))
 
     print("world_rank",world_rank,"slocal_rank",slocal_rank,"local_rank",local_rank,flush=True)
 
@@ -846,7 +846,7 @@ if __name__ == "__main__":
 
     world_size = int(os.environ['SLURM_NTASKS'])
     world_rank = int(os.environ['SLURM_PROCID'])
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = int(os.environ.get("SLURM_LOCALID", 0))
 
 
     cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "Not Set")
