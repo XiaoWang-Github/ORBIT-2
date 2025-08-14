@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH -A g200
 #SBATCH -J flash
-#SBATCH --nodes=1
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=72
 #SBATCH -t 00:10:00
+#SBATCH -p debug
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.error
 
@@ -26,16 +27,19 @@ export PYTHONPATH=$PWD/../src:$PYTHONPATH
 
 
 export TRITON_HOME=/dev/shm/
-cat > run-cmd.sh <<EOF
+cat > run-cmd_1.sh <<EOF
 #!/bin/bash
 RANK=\$SLURM_PROCID
 LOCAL_RANK=\$SLURM_LOCALID
 
-python ./intermediate_downscaling.py ../configs/interm_8m.yaml
+#python ./intermediate_downscaling.py ../configs/interm_8m.yaml
 #python ./intermediate_downscaling.py ../configs/interm_117m.yaml
+#python ./intermediate_downscaling.py ../configs/interm_1b.yaml
+python ./intermediate_downscaling.py ../configs/interm_10b.yaml
+
 
 EOF
 
-chmod +x run-cmd.sh
+chmod +x run-cmd_1.sh
 
-srun --environment=${HOME}/.edf/superres.toml --container-workdir=$PWD ./run-cmd.sh
+srun --environment=${HOME}/.edf/superres.toml --container-workdir=$PWD ./run-cmd_1.sh
