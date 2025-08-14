@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -A g200
 #SBATCH -J flash
-#SBATCH --nodes=1
+#SBATCH --nodes=2
 #SBATCH --gpus-per-node=4
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=72
@@ -9,8 +9,9 @@
 #SBATCH -p debug
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.error
-#SBATCH --uenv=pytorch/v2.6.0:/user-environment
-#SBATCH --view=default
+#SBATCH --uenv=prgenv-gnu/24.11:v2
+#SBATCH --view=modules
+
 
 [ -z $JOBID ] && JOBID=$SLURM_JOB_ID
 [ -z $JOBSIZE ] && JOBSIZE=$SLURM_JOB_NUM_NODES
@@ -23,7 +24,18 @@ export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
 export OMP_NUM_THREADS=64
 
 #load environment
+module load gcc/13.3.0
+module load cray-mpich/8.1.30
+module load cuda/12.6.0
+module load aws-ofi-nccl/git.v1.9.2-aws_1.9.2
+
+module list
+
+eval "$(/capstor/store/cscs/userlab/g200/jyc/sw/miniforge/25.3.0/bin/conda shell.bash hook)"
+conda activate /capstor/scratch/cscs/jychoi/sw/envs/orbit
 #source /capstor/store/cscs/userlab/g200/xf9/orbit_env/bin/activate
+
+which python
 
 export MASTER_ADDR=$(scontrol show hostnames $SLURM_NODELIST | head -n 1)
 export MASTER_PORT=29500
@@ -77,21 +89,19 @@ export PYTHONPATH=$PWD/../src:$PYTHONPATH
 
 export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
 
-
-srun -n $((SLURM_JOB_NUM_NODES*4))  bash -c "
-    export RANK=\$SLURM_PROCID
-    export LOCAL_RANK=\$SLURM_LOCALID
-    . /capstor/store/cscs/userlab/g200/xf9/orbit_env/bin/activate 
-    python ./intermediate_downscaling.py ../configs/interm_8m.yaml
-"
+#time srun -N$SLURM_JOB_NUM_NODES -n$((SLURM_JOB_NUM_NODES*4)) \
+#python -u intermediate_downscaling.py ../configs/interm_8m.yaml
 
 
+#time srun -N$SLURM_JOB_NUM_NODES -n$((SLURM_JOB_NUM_NODES*4)) \
+#python -u intermediate_downscaling.py ../configs/interm_117m.yaml
 
-#time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-#python ./intermediate_downscaling.py ../configs/interm_117m.yaml
 
-#time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-#python ./intermediate_downscaling.py ../configs/interm_1b.yaml
+
+time srun -N$SLURM_JOB_NUM_NODES -n$((SLURM_JOB_NUM_NODES*4)) \
+python -u intermediate_downscaling.py ../configs/interm_1b.yaml
+
+
 
 #time srun -n $((SLURM_JOB_NUM_NODES*8)) \
 #python ./intermediate_downscaling.py ../configs/interm_10b.yaml
