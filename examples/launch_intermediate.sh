@@ -31,7 +31,14 @@ module unload libfabric
 
 #eval "$(/lustre/orion/world-shared/stf218/atsaris/env_test_march/miniconda/bin/conda shell.bash hook)"
 
-conda activate /lustre/orion/lrn036/world-shared/xf9/torch27
+conda activate /lustre/orion/proj-shared/lrn036/yoonh/torch27
+
+# Set cache directories
+export TMPDIR="/lustre/orion/proj-shared/lrn036/yoonh/cache"
+export PIP_CACHE_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache"
+export PYTHONPYCACHEPREFIX="/lustre/orion/proj-shared/lrn036/yoonh/cache"
+export TORCH_HOME="/lustre/orion/proj-shared/lrn036/yoonh/cache"
+export TORCH_EXTENSIONS_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache/torch_extensions"
 
 #source activate /lustre/orion/lrn036/world-shared/xf9/torch27-rocm63
 #conda activate /lustre/orion/lrn036/world-shared/xf9/torch26

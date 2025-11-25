@@ -16,18 +16,7 @@ import torch
 import os
 import functools
 from argparse import ArgumentParser
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp.wrap import wrap, transformer_auto_wrap_policy
-from torch.cuda.amp.grad_scaler import GradScaler
 import torch.distributed as dist
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    checkpoint_wrapper,
-    CheckpointImpl,
-    apply_activation_checkpointing,
-)
-from torch.distributed.fsdp import MixedPrecision
-from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
-from torch.nn.parallel import DistributedDataParallel as DDP
 from datetime import timedelta
 import sys
 import time
@@ -42,6 +31,7 @@ from climate_learn.models.hub.components.vit_blocks import Block
 from torch.nn import Sequential
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
 from climate_learn.utils.fused_attn import FusedAttn
+from climate_learn.utils import quantization_utils
 from utils import seed_everything, init_par_groups
 
 
@@ -64,21 +54,54 @@ def validate_data_type(data_type):
         )
 
 
+def _load_pretrained_weights(model, pretrain_path, device, world_rank):
+    if world_rank == 0:
+        print(
+            "world_rank",
+            world_rank,
+            "load pretrained model",
+            pretrain_path,
+            " Pretrain path found.",
+            flush=True,
+        )
+    
+    # Load checkpoint
+    checkpoint = torch.load(pretrain_path, map_location="cpu")
+    
+    # Handle both full checkpoint and state_dict only
+    if "state_dict" in checkpoint:
+        state_dict = checkpoint["state_dict"]
+    else:
+        state_dict = checkpoint
+
+    # Clean up state dict keys if needed (remove 'module.' prefix)
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        name = k.replace("module.", "") if "module." in k else k
+        # Handle FSDP prefix removal if present in checkpoint
+        name = name.replace("_fsdp_wrapped_module.", "") if "_fsdp_wrapped_module." in name else name
+        new_state_dict[name] = v
+    state_dict = new_state_dict
+
+    # Load state dict
+    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    
+    if world_rank == 0:
+        print(f"Missing keys: {len(missing_keys)}", flush=True)
+
+
 def load_pretrained_weights(
     model, pretrain_path, device, tensor_par_size=1, tensor_par_group=None
 ):
     """Load pretrained model weights for visualization.
 
-    This function loads only the model weights without optimizer or scheduler states,
-    which is sufficient for inference/visualization tasks. It handles tensor parallel
-    models by loading the appropriate rank-specific checkpoint.
-
     Args:
         model: PyTorch model to load weights into
         pretrain_path (str): Path to the pretrained model checkpoint
-        device: Device to load the model on (e.g., torch.device('cuda:0'))
+        device: Device to load the model on
         tensor_par_size (int): Size of tensor parallelism (default: 1)
         tensor_par_group: Process group for tensor parallelism (default: None)
+        auto_wrap_policy: FSDP auto wrap policy
     """
     world_rank = dist.get_rank()
     local_rank = int(os.environ["SLURM_LOCALID"])
@@ -87,91 +110,25 @@ def load_pretrained_weights(
     if tensor_par_size > 1 and pretrain_path is not None:
         pretrain_path = pretrain_path + "_" + "rank" + "_" + str(world_rank)
 
-    print("world_rank", world_rank, "pretrain_path", pretrain_path, flush=True)
-
     # load pretrained model
-    if world_rank < tensor_par_size:
-        if pretrain_path is None:
-            print(
-                "world_rank",
-                world_rank,
-                "No pretrained model path provided in config.",
-                flush=True,
-            )
-            sys.exit("pretrain_path is None - please specify pretrain path in config file")
-        elif os.path.exists(pretrain_path):
-            print(
-                "world_rank",
-                world_rank,
-                "load pretrained model",
-                pretrain_path,
-                " Pretrain path found.",
-                flush=True,
-            )
-            _load_pretrained_weights(model, pretrain_path, device, world_rank)
-        else:
-            print(
-                "resume from pretrained model was set to True. But the pretrained model path does not exist.",
-                flush=True,
-            )
-            sys.exit("pretrain path does not exist")
+    if pretrain_path is None:
+        print(
+            "world_rank",
+            world_rank,
+            "No pretrained model path provided in config.",
+            flush=True,
+        )
+        sys.exit("pretrain_path is None - please specify pretrain path in config file")
+    elif os.path.exists(pretrain_path):
+        _load_pretrained_weights(model, pretrain_path, device, world_rank)
+    else:
+        print(
+            "resume from pretrained model was set to True. But the pretrained model path does not exist.",
+            flush=True,
+        )
+        sys.exit("pretrain path does not exist")
 
     dist.barrier(device_ids=[local_rank])
-
-
-def _load_pretrained_weights(model, pretrain_path, device, world_rank):
-    """Internal function to load and process pretrained weights.
-
-    Args:
-        model: Target model to load weights into
-        pretrain_path (str): Path to checkpoint file
-        device: Device to load the model on
-        world_rank (int): Global rank of the current process
-    """
-    # Load to CPU first to avoid GPU memory issues
-    map_location = "cpu"
-    checkpoint = torch.load(pretrain_path, map_location=map_location)
-
-    print("Loading pre-trained checkpoint from: %s" % pretrain_path)
-    pretrain_model = checkpoint["model_state_dict"]
-
-    del checkpoint
-
-    state_dict = model.state_dict()
-
-    if torch.distributed.get_rank() == 0:
-        for k in list(pretrain_model.keys()):
-            print(
-                "Pretrained model before deletion. Name ",
-                k,
-                "shape",
-                pretrain_model[k].shape,
-                flush=True,
-            )
-
-    # Remove keys that don't exist in the target model or have shape mismatches
-    for k in list(pretrain_model.keys()):  # Iterate through pretrained model keys
-        if k not in state_dict.keys():
-            print(f"Removing key {k} from pretrained checkpoint: no exist")
-            del pretrain_model[k]
-        elif (
-            pretrain_model[k].shape != state_dict[k].shape
-        ):  # if pre-train and fine-tune model weights dimension doesn't match
-            if k == "pos_embed":
-                print("interpolate positional embedding", flush=True)
-                interpolate_pos_embed(model, pretrain_model, new_size=model.img_size)
-            else:
-                print(
-                    f"Removing key {k} from pretrained checkpoint: no matching shape",
-                    pretrain_model[k].shape,
-                    state_dict[k].shape,
-                )
-                del pretrain_model[k]
-
-    # Load pre-trained model
-    msg = model.load_state_dict(pretrain_model, strict=False)
-    print(msg)
-    del pretrain_model
 
 
 def main():
@@ -217,6 +174,16 @@ def main():
         type=str,
         default=None,
         help="Path to model checkpoint file (.ckpt). If provided, overrides the 'pretrain' path in config file",
+    )
+    parser.add_argument(
+        "--quantize",
+        action="store_true",
+        help="Apply INT8 dynamic quantization to attention layers (PTQ)",
+    )
+    parser.add_argument(
+        "--quantize-all",
+        action="store_true",
+        help="Apply INT8 quantization to all layers (not recommended, use --quantize for hybrid strategy)",
     )
     args = parser.parse_args()
     
@@ -524,6 +491,9 @@ def main():
 
     print("denorm is ", denorm, flush=True)
 
+    # Set the model to evaluation mode
+    model.eval()
+
     # Load pretrained model weights from checkpoint
     load_pretrained_weights(
         model,
@@ -536,78 +506,80 @@ def main():
     if torch.distributed.get_rank() == 0:
         print("model is ", model, flush=True)
 
-    print(
-        "rank",
-        dist.get_rank(),
-        "model.var_query[0,0,0]",
-        model.var_query[0, 0, 0],
-        "model.head[0].weight",
-        model.head[0].weight[0, 0],
-        "pos_embed[0,0,0]",
-        model.pos_embed[0, 0, 0],
-        "pos_embed[0,0,1]",
-        model.pos_embed[0, 0, 1],
-        "conv_out.weight",
-        model.conv_out.weight[0, 0, 0, 0],
-        flush=True,
-    )
+    # =========================================================================
+    # POST-TRAINING QUANTIZATION (PTQ) - Added for hybrid quantization
+    # =========================================================================
+    if args.quantize or args.quantize_all:
+        if world_rank == 0:
+            print("\n" + "="*80, flush=True)
+            print("POST-TRAINING QUANTIZATION (PTQ) ENABLED", flush=True)
+            print("="*80, flush=True)
+            
+            # Check ROCm environment
+            env_info = quantization_utils.check_rocm_quantization_support()
+            print("\nEnvironment Information:", flush=True)
+            print(f"  PyTorch version: {env_info['pytorch_version']}", flush=True)
+            print(f"  CUDA available: {env_info['cuda_available']}", flush=True)
+            print(f"  ROCm available: {env_info['rocm_available']}", flush=True)
+            if env_info['rocm_available']:
+                print(f"  ROCm version: {env_info['rocm_version']}", flush=True)
+            print(f"  Device: {env_info['device_name']}", flush=True)
+            print(f"  Quantization available: {env_info['quantization_available']}", flush=True)
+            
+            if not env_info['quantization_available']:
+                print("\nWARNING: PyTorch quantization not available!", flush=True)
+                print("Skipping quantization...\n", flush=True)
+        else:
+            # Other ranks need to know if quantization is available
+            env_info = quantization_utils.check_rocm_quantization_support()
+        
+        # Wait for rank 0 to finish printing
+        dist.barrier()
+        
+        if env_info['quantization_available']:
+            # Apply quantization
+            attention_only = not args.quantize_all
+            
+            if world_rank == 0:
+                if attention_only:
+                    print("Applying HYBRID quantization (Attention INT8, CNN FP16/32)...", flush=True)
+                else:
+                    print("Applying FULL model quantization (all layers INT8)...", flush=True)
+            
+            # Apply dynamic quantization (will move to CPU, quantize, then try to move back)
+            model = quantization_utils.apply_dynamic_quantization(
+                model,
+                attention_only=attention_only,
+                dtype=torch.qint8,
+                device=device
+            )
+            
+            # Print quantization summary
+            if world_rank == 0:
+                quantization_utils.print_model_quantization_summary(model)
+            
+            dist.barrier()
+    # =========================================================================
+
+    # print(
+    #     "rank",
+    #     dist.get_rank(),
+    #     "model.var_query[0,0,0]",
+    #     model.var_query[0, 0, 0],
+    #     "model.head[0].weight",
+    #     model.head[0].weight()[0, 0] if callable(model.head[0].weight) else model.head[0].weight[0, 0],
+    #     "pos_embed[0,0,0]",
+    #     model.pos_embed[0, 0, 0],
+    #     "pos_embed[0,0,1]",
+    #     model.pos_embed[0, 0, 1],
+    #     "conv_out.weight",
+    #     model.conv_out.weight[0, 0, 0, 0],
+    #     flush=True,
+    # )
 
     # Set random seed for reproducibility
     seed_everything(0)
 
-    # Configure automatic layer wrapping for FSDP
-    # This determines which layers should be wrapped for sharding
-    if preset == "vit" or preset == "res_slimvit":
-
-        auto_wrap_policy = functools.partial(
-            transformer_auto_wrap_policy,
-            transformer_layer_cls={
-                Block,
-                Sequential,
-            },
-        )
-
-        check_fn = lambda submodule: isinstance(submodule, Block) or isinstance(
-            submodule, Sequential
-        )
-
-    if data_type == "float32":
-        precision_dt = torch.float32
-    elif data_type == "bfloat16":
-        precision_dt = torch.bfloat16
-    else:
-        raise RuntimeError("Data type not supported")
-
-    # Configure mixed precision policy for memory efficiency
-    bfloatPolicy = MixedPrecision(
-        param_dtype=precision_dt,
-        # Gradient communication precision.
-        reduce_dtype=precision_dt,
-        # Buffer precision.
-        buffer_dtype=precision_dt,
-    )
-
-    # Wrap model with Fully Sharded Data Parallel for distributed training
-    print("enter fully sharded FSDP", flush=True)
-    model = FSDP(
-        model,
-        device_id=local_rank,
-        process_group=fsdp_group,
-        sync_module_states=True,
-        sharding_strategy=dist.fsdp.ShardingStrategy.FULL_SHARD,
-        auto_wrap_policy=auto_wrap_policy,
-        mixed_precision=bfloatPolicy,
-        forward_prefetch=True,
-        limit_all_gathers=False,
-    )
-
-    # Apply activation checkpointing to reduce memory usage
-    apply_activation_checkpointing(
-        model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn
-    )
-
-    # Set the model to evaluation mode (disable dropout, batch norm training, etc.)
-    model.eval()
 
     # Run visualization on specified sample and variable
     # Note: All ranks must participate in visualization due to potential distributed operations

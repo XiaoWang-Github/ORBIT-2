@@ -1,7 +1,9 @@
 **/__pycache__
-**/*.out
 **/*.error
 **/*.swp
 **/*.log
 **/checkpoints
 **/climate_learn.egg-info
+
+# Allow flash log files for analysis (exception must come first)
+!flash-*.out

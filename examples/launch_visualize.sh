@@ -27,7 +27,18 @@ module unload libfabric
 
 #eval "$(/lustre/orion/world-shared/stf218/atsaris/env_test_march/miniconda/bin/conda shell.bash hook)"
 
-conda activate /lustre/orion/lrn036/world-shared/xf9/torch27
+conda activate /lustre/orion/proj-shared/lrn036/yoonh/torch27
+
+# Set cache directories
+export TMPDIR="/lustre/orion/proj-shared/lrn036/yoonh/cache"
+export PIP_CACHE_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache"
+export PYTHONPYCACHEPREFIX="/lustre/orion/proj-shared/lrn036/yoonh/cache"
+export TORCH_HOME="/lustre/orion/proj-shared/lrn036/yoonh/cache"
+export TORCH_EXTENSIONS_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache/torch_extensions"
+export TRITON_CACHE_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache/triton"
+export PYTHONUSERBASE="/lustre/orion/proj-shared/lrn036/yoonh/python_libs"
+export PATH="$PYTHONUSERBASE/bin:$PATH"
+export PYTHONPATH="$PYTHONUSERBASE/lib/python3.9/site-packages:$PYTHONUSERBASE/lib64/python3.9/site-packages:$PYTHONPATH"
 
 #source activate /lustre/orion/lrn036/world-shared/xf9/torch27-rocm63
 #conda activate /lustre/orion/lrn036/world-shared/xf9/torch26
@@ -85,5 +96,11 @@ export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 # 3. With additional options (index, variable, etc.):
 # time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_8m_ft.yaml --checkpoint /path/to/custom/checkpoint.ckpt --index 10 --variable 2m_temperature_max
 
-time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_8m_ft.yaml
+# 4. With quantization (hybrid: attention INT8, CNN FP16/32):
+# time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_8m_ft.yaml --quantize
+
+# 5. With quantization and custom checkpoint:
+# time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_8m_ft.yaml --quantize --checkpoint /path/to/checkpoint.ckpt
+
+time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_8m.yaml --checkpoint checkpoints/climate/interm_epoch_1.ckpt --quantize
 
