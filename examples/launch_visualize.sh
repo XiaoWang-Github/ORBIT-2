@@ -102,5 +102,5 @@ export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 # 5. With quantization and custom checkpoint:
 # time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_8m_ft.yaml --quantize --checkpoint /path/to/checkpoint.ckpt
 
-time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_8m.yaml --checkpoint checkpoints/climate/interm_epoch_1.ckpt --quantize
+time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_8m.yaml --checkpoint checkpoints/climate/interm_epoch_58.ckpt
 

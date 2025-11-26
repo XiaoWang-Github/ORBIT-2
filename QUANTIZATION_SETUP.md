@@ -155,6 +155,78 @@ else:
 PACKAGE_GITHUB_URL = github_eps[0].value if github_eps else "https://github.com/ROCm/bitsandbytes"
 ```
 
+### Automated Patch Script
+
+To apply all patches at once, create and run this script:
+
+**File**: `patch_bitsandbytes_py39.sh`
+
+```bash
+#!/bin/bash
+# Automated patch script for bitsandbytes Python 3.9 compatibility
+# Run this in the bitsandbytes directory after cloning
+
+BNB_DIR="/lustre/orion/proj-shared/lrn036/yoonh/bitsandbytes"
+cd $BNB_DIR
+
+echo "Applying Python 3.9 compatibility patches to bitsandbytes..."
+
+# Patch 1: functional.py - Fix tuple[...] type hints
+echo "Patching functional.py..."
+sed -i 's/-> tuple\[/-> Tuple[/g' bitsandbytes/functional.py
+sed -i '1s/^/from typing import Tuple, Union, Optional\n/' bitsandbytes/functional.py
+
+# Patch 2: modules.py - Fix Union type hints
+echo "Patching nn/modules.py..."
+sed -i 's/torch.Tensor | tuple\[/Union[torch.Tensor, Tuple[/g' bitsandbytes/nn/modules.py
+sed -i 's/\] -> /]] -> /g' bitsandbytes/nn/modules.py
+sed -i '1s/^/from typing import Union, Tuple, Optional\n/' bitsandbytes/nn/modules.py
+
+# Patch 3: __init__.py - Fix importlib.metadata
+echo "Patching __init__.py..."
+cat > /tmp/patch_init.py << 'EOF'
+import sys
+
+# Read the file
+with open('bitsandbytes/__init__.py', 'r') as f:
+    content = f.read()
+
+# Find and replace the entry_points section
+old_code = '''eps = entry_points()
+PACKAGE_GITHUB_URL = eps.select(group="bitsandbytes.metadata", name="github_url")[0].value'''
+
+new_code = '''eps = entry_points()
+# Python 3.9 compatibility
+if hasattr(eps, 'select'):
+    github_eps = eps.select(group="bitsandbytes.metadata", name="github_url")
+else:
+    github_eps = eps.get("bitsandbytes.metadata", [])
+    github_eps = [ep for ep in github_eps if ep.name == "github_url"]
+
+PACKAGE_GITHUB_URL = github_eps[0].value if github_eps else "https://github.com/ROCm/bitsandbytes"'''
+
+content = content.replace(old_code, new_code)
+
+# Write back
+with open('bitsandbytes/__init__.py', 'w') as f:
+    f.write(content)
+
+print("Patched __init__.py successfully")
+EOF
+
+python /tmp/patch_init.py
+
+echo "All patches applied successfully!"
+echo "Now run: pip install -e . --user"
+```
+
+**Usage**:
+```bash
+chmod +x patch_bitsandbytes_py39.sh
+./patch_bitsandbytes_py39.sh
+```
+
+
 ---
 
 ## Quantization Implementation

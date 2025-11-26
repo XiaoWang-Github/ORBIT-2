@@ -28,6 +28,7 @@ from climate_learn.data.processing.era5_constants import (
     CONSTANTS,
 )
 from climate_learn.models.hub.components.vit_blocks import Block
+from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
 from torch.nn import Sequential
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
 from climate_learn.utils.fused_attn import FusedAttn
@@ -69,22 +70,49 @@ def _load_pretrained_weights(model, pretrain_path, device, world_rank):
     checkpoint = torch.load(pretrain_path, map_location="cpu")
     
     # Handle both full checkpoint and state_dict only
-    if "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
+    if world_rank == 0:
+        print(f"Checkpoint keys: {list(checkpoint.keys())}", flush=True)
+
+    if "model_state_dict" in checkpoint:
+        pretrain_model = checkpoint["model_state_dict"]
+    elif "state_dict" in checkpoint:
+        pretrain_model = checkpoint["state_dict"]
     else:
-        state_dict = checkpoint
+        pretrain_model = checkpoint
 
     # Clean up state dict keys if needed (remove 'module.' prefix)
     new_state_dict = {}
-    for k, v in state_dict.items():
+    for k, v in pretrain_model.items():
         name = k.replace("module.", "") if "module." in k else k
         # Handle FSDP prefix removal if present in checkpoint
         name = name.replace("_fsdp_wrapped_module.", "") if "_fsdp_wrapped_module." in name else name
         new_state_dict[name] = v
-    state_dict = new_state_dict
+    pretrain_model = new_state_dict
+
+    state_dict = model.state_dict()
+    
+    # Handle shape mismatches and interpolation
+    for k in list(pretrain_model.keys()):
+        if k not in state_dict.keys():
+            if world_rank == 0:
+                # print(f"Removing key {k} from pretrained checkpoint: no exist in model", flush=True)
+                pass
+            del pretrain_model[k]
+        elif pretrain_model[k].shape != state_dict[k].shape:
+            if k == "pos_embed":
+                if world_rank == 0:
+                    print("interpolate positional embedding", flush=True)
+                interpolate_pos_embed(model, pretrain_model, new_size=model.img_size)
+            else:
+                if world_rank == 0:
+                    print(
+                        f"Removing key {k} from pretrained checkpoint: no matching shape {pretrain_model[k].shape} vs {state_dict[k].shape}",
+                        flush=True,
+                    )
+                del pretrain_model[k]
 
     # Load state dict
-    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    missing_keys, unexpected_keys = model.load_state_dict(pretrain_model, strict=False)
     
     if world_rank == 0:
         print(f"Missing keys: {len(missing_keys)}", flush=True)
