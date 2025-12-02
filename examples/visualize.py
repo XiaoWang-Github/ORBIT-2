@@ -611,22 +611,53 @@ def main():
 
     # Run visualization on specified sample and variable
     # Note: All ranks must participate in visualization due to potential distributed operations
-    cl.utils.visualize.visualize_at_index(
-        model,
-        data_module,
-        dm_vis,
-        out_list=out_vars,
-        in_transform=denorm,
-        out_transform=denorm,
-        variable=args.variable,  # Variable to visualize
-        src=data_key,
-        device=device,
-        div=div,
-        overlap=overlap,
-        index=args.index,  # Sample index to visualize
-        tensor_par_size=tensor_par_size,
-        tensor_par_group=tensor_par_group,
-    )
+    # Run visualization on all test samples
+    # Note: All ranks must participate in visualization due to potential distributed operations
+    if world_rank == 0:
+        print(f"Starting inference on all test samples...", flush=True)
+    
+    psnr_list = []
+    ssim_list = []
+    
+    # Iterate over dataloader directly
+    for batch_idx, batch in enumerate(data_module.test_dataloader()):
+        if world_rank == 0:
+            print(f"\nProcessing batch {batch_idx}...", flush=True)
+            
+        # visualize_batch returns a list of metrics for the batch
+        batch_metrics = cl.utils.visualize.visualize_batch(
+            model,
+            batch,
+            data_module,
+            out_list=out_vars,
+            in_transform=denorm,
+            out_transform=denorm,
+            variable=args.variable,
+            src=data_key,
+            device=device,
+            div=div,
+            overlap=overlap,
+            batch_idx=batch_idx,
+        )
+        
+        if world_rank == 0 and batch_metrics:
+            for m in batch_metrics:
+                if 'psnr' in m:
+                    psnr_list.append(m['psnr'])
+                if 'ssim' in m:
+                    ssim_list.append(m['ssim'])
+
+    if world_rank == 0:
+        print("\n" + "="*80, flush=True)
+        print("FINAL EVALUATION RESULTS", flush=True)
+        print("="*80, flush=True)
+        if psnr_list:
+            avg_psnr = sum(psnr_list) / len(psnr_list)
+            print(f"Average PSNR: {avg_psnr:.6f} (over {len(psnr_list)} samples)", flush=True)
+        if ssim_list:
+            avg_ssim = sum(ssim_list) / len(ssim_list)
+            print(f"Average SSIM: {avg_ssim:.6f} (over {len(ssim_list)} samples)", flush=True)
+        print("="*80 + "\n", flush=True)
 
     # Clean up distributed process group
     dist.destroy_process_group()

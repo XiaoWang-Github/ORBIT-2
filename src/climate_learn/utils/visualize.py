@@ -10,6 +10,7 @@ import logging
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 from scipy.stats import rankdata
 
+import copy
 from ..data.processing.era5_constants import VAR_TO_UNIT as ERA5_VAR_TO_UNIT
 from ..data.processing.cmip6_constants import VAR_TO_UNIT as CMIP6_VAR_TO_UNIT
 from climate_learn.data.processing.era5_constants import CONSTANTS
@@ -672,7 +673,119 @@ def visualize_at_index(
             f"ppred.shape {images['prediction'].shape}, min {images['prediction'].min()}, max {images['prediction'].max()}"
         )
 
-    return None  # Returns None to match original API
+    return metrics if config.compute_metrics and has_ground_truth else {}
+
+
+def visualize_batch(
+    mm,
+    batch,
+    dm,
+    out_list,
+    in_transform,
+    out_transform,
+    variable,
+    src,
+    device,
+    div,
+    overlap,
+    config: Optional[VisualizationConfig] = None,
+    batch_idx: int = 0,
+):
+    """Visualize and evaluate a whole batch of samples."""
+    if config is None:
+        config = VisualizationConfig()
+
+    x, y = batch[:2]
+    if len(batch) >= 4:
+        in_variables = batch[2]
+        out_variables = batch[3]
+    else:
+        raise ValueError("Batch structure not supported")
+
+    batch_size = x.shape[0]
+
+    # Setup visualization parameters
+    lat, lon = dm.get_lat_lon()
+    out_channel = dm.out_vars.index(variable)
+    in_channel = dm.in_vars.index(variable)
+
+    yout = len(lat)
+    xout = len(lon)
+
+    if dm.inp_root_dir == dm.out_root_dir:
+        yout = yout * mm.superres_mag
+        xout = xout * mm.superres_mag
+
+    yinp = yout // mm.superres_mag
+    xinp = xout // mm.superres_mag
+
+    processor = TileProcessor(div, overlap, (yinp, xinp), (yout, xout), mm.superres_mag)
+
+    # Store tiles for each sample
+    sample_tiles = [[] for _ in range(batch_size)]
+
+    for vindex in range(div):
+        for hindex in range(div):
+            coords = processor.get_tile_coordinates(hindex, vindex)
+
+            x_tile = x[:, :, coords.yi1 : coords.yi2, coords.xi1 : coords.xi2]
+            y_tile = y[:, :, coords.yo1 : coords.yo2, coords.xo1 : coords.xo2]
+
+            # Inference
+            x_tile = x_tile.to(device)
+            y_tile_dev = y_tile.to(device)
+            
+            with torch.no_grad():
+                pred = mm.forward(x_tile, in_variables, out_variables)
+                pred = clip_replace_constant(y_tile_dev, pred, out_variables)
+
+            # Process each sample
+            for i in range(batch_size):
+                # Input processing
+                xx = x_tile[i]
+                temp = xx[in_channel]
+                temp = temp.repeat(len(out_list), 1, 1)
+                img = in_transform(temp)[out_channel].detach().cpu().numpy()
+
+                # Prediction processing
+                ppred = out_transform(pred[i])
+                ppred = ppred[out_channel].detach().cpu().numpy()
+
+                # Ground truth processing
+                yy = out_transform(y_tile[i])
+                yy = yy[out_channel].detach().cpu().numpy()
+
+                current_coords = copy.deepcopy(coords)
+                if should_flip_image(src):
+                    img = np.flip(img, 0)
+                    ppred = np.flip(ppred, 0)
+                    yy = np.flip(yy, 0)
+                    current_coords = adjust_coords_for_flip(current_coords, processor)
+
+                tile_result = {
+                    "input": img,
+                    "prediction": ppred,
+                    "ground_truth": yy,
+                    "coords": current_coords
+                }
+                sample_tiles[i].append(tile_result)
+
+    # Stitch and compute metrics
+    batch_metrics = []
+    has_ground_truth = dm.inp_root_dir != dm.out_root_dir
+    
+    for i in range(batch_size):
+        images = stitch_tiles(sample_tiles[i], processor, has_ground_truth)
+        
+        # Save visualization only for the very first sample of the first batch
+        if batch_idx == 0 and i == 0:
+            save_visualization(images, config, dist.get_rank())
+
+        if config.compute_metrics and has_ground_truth:
+            metrics = compute_metrics(images["prediction"], images["ground_truth"])
+            batch_metrics.append(metrics)
+            
+    return batch_metrics
 
 
 # Backward compatibility functions - maintain API compatibility with original code

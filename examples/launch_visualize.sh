@@ -55,6 +55,13 @@ module load aws-ofi-rccl/devel
 
 echo $LD_LIBRARY_PATH
 
+# load omnistat
+ml use /autofs/nccs-svm1_sw/crusher/amdsw/modules
+ml omnistat-wrapper
+
+# start omnistat - enable data collection
+${OMNISTAT_WRAPPER} usermode --start --interval 1
+
 
 export FI_MR_CACHE_MONITOR=kdreg2     # Required to avoid a deadlock.
 export FI_CXI_DEFAULT_CQ_SIZE=131072  # Ask the network stack to allocate additional space to process message completions.
@@ -104,3 +111,8 @@ export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 
 time srun -n $((SLURM_JOB_NUM_NODES*8)) python ./visualize.py ../configs/interm_8m.yaml --checkpoint checkpoints/climate/interm_epoch_58.ckpt
 
+# stop omnistat - generate summary report and stop data collection
+${OMNISTAT_WRAPPER} usermode --stopexporters
+${OMNISTAT_WRAPPER} query --interval 1 --job ${SLURM_JOB_ID} --pdf omnistat.${SLURM_JOB_ID}.pdf
+${OMNISTAT_WRAPPER} usermode --stopserver
+mv /tmp/omnistat/${SLURM_JOB_ID} data_omnistat.${SLURM_JOB_ID}

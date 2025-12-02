@@ -130,7 +130,7 @@ def apply_dynamic_quantization(
     Args:
         model: PyTorch model to quantize
         attention_only: If True, only quantize attention layers (hybrid strategy)
-        dtype: Quantization data type (torch.qint8 or torch.float16)
+        dtype: Quantization data type (torch.qint8)
         device: Original device to move model back to after quantization (can be int or torch.device)
         
     Returns:
@@ -169,8 +169,9 @@ def apply_dynamic_quantization(
         print(f"Applying bitsandbytes 8-bit quantization on {original_device}...", flush=True)
         
         if attention_only:
-            print("Strategy: Hybrid (Attention INT8, CNN FP16/32) using bitsandbytes", flush=True)
+            print("Strategy: Hybrid (Attention + MLP INT8, CNN FP16/32) using bitsandbytes", flush=True)
             from climate_learn.models.hub.components.attention import Attention, VariableMapping_Attention
+            from climate_learn.models.hub.components.vit_blocks import Mlp
             
             quantized_count = 0
             for name, module in model.named_modules():
@@ -181,6 +182,31 @@ def apply_dynamic_quantization(
                             if isinstance(layer, nn.Linear):
                                 # Replace with bitsandbytes Linear8bitLt
                                 # Note: has_fp16_weights=False for inference to save memory
+                                bnb_layer = bnb.nn.Linear8bitLt(
+                                    layer.in_features,
+                                    layer.out_features,
+                                    bias=layer.bias is not None,
+                                    has_fp16_weights=False,
+                                    threshold=6.0,
+                                )
+                                # Copy weights and bias
+                                bnb_layer.weight.data = layer.weight.data.clone()
+                                if layer.bias is not None:
+                                    bnb_layer.bias.data = layer.bias.data.clone()
+                                
+                                # Move to device immediately
+                                bnb_layer = bnb_layer.to(original_device)
+                                
+                                setattr(module, attr_name, bnb_layer)
+                                quantized_count += 1
+                                print(f"  ✓ Quantized {name}.{attr_name} (bnb 8-bit)", flush=True)
+                
+                elif isinstance(module, Mlp):
+                    for attr_name in ['fc1', 'fc2']:
+                        if hasattr(module, attr_name):
+                            layer = getattr(module, attr_name)
+                            if isinstance(layer, nn.Linear):
+                                # Replace with bitsandbytes Linear8bitLt
                                 bnb_layer = bnb.nn.Linear8bitLt(
                                     layer.in_features,
                                     layer.out_features,
