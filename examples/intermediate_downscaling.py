@@ -579,6 +579,8 @@ def run_training_epochs(
     min_scale,
     cp_save_path,
     local_rank,
+    use_qat=False,
+    qat_start_epoch=0,
 ):
     """Run training loop for specified epoch range.
     
@@ -599,11 +601,30 @@ def run_training_epochs(
         min_scale (float): Minimum scale value for GradScaler (None for float32)
         cp_save_path (str): Path for saving checkpoints
         local_rank (int): Local rank for current process
+        use_qat (bool): Whether QAT is enabled
+        qat_start_epoch (int): Epoch to activate QAT
         
     Returns:
         int: Final epoch number
     """
     for epoch in range(epoch_start, epoch_end):
+        # Activate QAT at specified epoch
+        if use_qat and epoch == qat_start_epoch:
+            if world_rank == 0:
+                print(f"\n{'='*80}", flush=True)
+                print(f"ACTIVATING QAT AT EPOCH {epoch}", flush=True)
+                print(f"{'='*80}", flush=True)
+            from climate_learn.utils import qat_utils
+            qat_utils.enable_qat_mode(model, enable=True)
+            # Reduce learning rate for fine-tuning
+            for param_group in optimizer.param_groups:
+                old_lr = param_group['lr']
+                param_group['lr'] *= 0.1
+                if world_rank == 0:
+                    print(f"Reduced learning rate: {old_lr} → {param_group['lr']}", flush=True)
+            if world_rank == 0:
+                print(f"{'='*80}\n", flush=True)
+        
         model.train()
         epoch_loss = torch.tensor(0.0, dtype=torch.float32, device=device)
         
@@ -862,6 +883,10 @@ def main(device):
     gpu_type = conf["trainer"]["gpu_type"]
     train_loss_str = conf["trainer"]["train_loss"]
     pretrain_path = conf["trainer"]["pretrain"]
+    
+    # QAT configuration
+    use_qat = conf["trainer"].get("use_qat", False)
+    qat_start_epoch = conf["trainer"].get("qat_start_epoch", 0)
 
     # Validate data type early to fail fast with clear error message
     validate_data_type(data_type)
@@ -921,6 +946,7 @@ def main(device):
         print(f"Model: {preset}, Parameters: {embed_dim}d {depth}L {num_heads}H")
         print(f"Training: {max_epochs} epochs, batch_size={batch_size}, lr={lr}")
         print(f"Data type: {data_type}, Loss: {train_loss_str}")
+        print(f"QAT: {'Enabled' if use_qat else 'Disabled'}, Start epoch: {qat_start_epoch if use_qat else 'N/A'}")
         print(f"Checkpoint: {checkpoint_path if checkpoint_path else 'None'}")
         print(f"Pretrain: {pretrain_path if pretrain_path else 'None'}")
         print("=" * 80 + "\n", flush=True)
@@ -1109,6 +1135,20 @@ def main(device):
                     tensor_par_size=tensor_par_size,
                     tensor_par_group=tensor_par_group,
                 )
+                
+                # Prepare model for QAT if enabled
+                if use_qat:
+                    if world_rank == 0:
+                        print("\nPreparing model for QAT...", flush=True)
+                    from climate_learn.utils import qat_utils
+                    model = qat_utils.prepare_model_for_qat(
+                        model, 
+                        attention_only=True
+                    )
+                    # Start with QAT disabled (will enable at qat_start_epoch)
+                    qat_utils.enable_qat_mode(model, enable=False)
+                    if world_rank == 0:
+                        print(f"✓ QAT prepared. Will activate at epoch {qat_start_epoch}", flush=True)
 
                 # Model weights loaded, no need to print all parameters again
 
@@ -1280,6 +1320,8 @@ def main(device):
                 min_scale=min_scale,
                 cp_save_path=cp_save_path,
                 local_rank=local_rank,
+                use_qat=use_qat,
+                qat_start_epoch=qat_start_epoch,
             )
 
             if first_time_bool:
