@@ -257,15 +257,25 @@ def main():
         pretrain_path = conf["trainer"]["pretrain"]
         if world_rank == 0:
             print(f"Using checkpoint from config: {pretrain_path}", flush=True)
-    # Use command line override if provided, otherwise use config value
-    # Force float32 for visualization to avoid numpy conversion issues with bfloat16
-    data_type = args.data_type or "float32"
+    # Get data type from config or command line
+    # Command line takes precedence, otherwise use config value
+    if args.data_type:
+        data_type = args.data_type
+        if world_rank == 0:
+            print(f"Using data_type from command line: {data_type}", flush=True)
+    else:
+        data_type = conf["trainer"].get("data_type", "float32")
+        if world_rank == 0:
+            print(f"Using data_type from config: {data_type}", flush=True)
     
-    # Validate data type
+    # Validate data type (only bfloat16 or float32 allowed)
     validate_data_type(data_type)
     
-    if world_rank == 0 and conf["trainer"].get("data_type") == "bfloat16":
-        print("Note: Forcing float32 for visualization (bfloat16 not supported for numpy conversion)", flush=True)
+    # Note: For visualization, we may need to force float32 if using bfloat16
+    # because some numpy operations don't support bfloat16
+    if data_type == "bfloat16":
+        if world_rank == 0:
+            print("Note: Using bfloat16 for model inference (may force float32 for numpy conversion if needed)", flush=True)
 
     # Load tiling configuration for TILES algorithm
     try:
@@ -513,6 +523,16 @@ def main():
         )
 
     model = model.to(device)
+    
+    # Apply precision based on data_type setting
+    if data_type == "bfloat16":
+        model = model.to(torch.bfloat16)
+        if world_rank == 0:
+            print("✓ Model converted to bfloat16", flush=True)
+    elif data_type == "float32":
+        model = model.to(torch.float32)
+        if world_rank == 0:
+            print("✓ Model using float32", flush=True)
 
     # Get denormalization transform for converting model outputs back to physical units
     denorm = test_transforms[0]
