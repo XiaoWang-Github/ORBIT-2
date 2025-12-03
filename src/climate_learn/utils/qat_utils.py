@@ -88,12 +88,13 @@ def prepare_model_for_qat(
     
     # Prepare model - this inserts FakeQuantize modules
     print("\nInserting FakeQuantize modules...")
-    model_prepared = quant.prepare_qat(model, inplace=False)
+    # Use inplace=True to avoid deepcopy issues with FSDP-wrapped models
+    quant.prepare_qat(model, inplace=True)
     
     print("✓ Model prepared for QAT")
     print("=" * 80 + "\n")
     
-    return model_prepared
+    return model
 
 
 def convert_qat_to_quantized(model: nn.Module) -> nn.Module:
