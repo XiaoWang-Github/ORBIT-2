@@ -887,6 +887,12 @@ def main(device):
     # QAT configuration
     use_qat = conf["trainer"].get("use_qat", False)
     qat_start_epoch = conf["trainer"].get("qat_start_epoch", 0)
+    
+    # Force float32 for QAT (FakeQuantize doesn't support bfloat16)
+    if use_qat and data_type == "bfloat16":
+        if world_rank == 0:
+            print("WARNING: QAT requires float32. Overriding data_type from bfloat16 to float32", flush=True)
+        data_type = "float32"
 
     # Validate data type early to fail fast with clear error message
     validate_data_type(data_type)
