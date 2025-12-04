@@ -173,8 +173,12 @@ def load_pretrained_weights(
                 model.eval()
                 # Convert QAT model to true INT8 (ALL RANKS)
                 model = qat_utils.convert_qat_to_quantized(model)
+                # CRITICAL: Force float32 for all parameters after INT8 conversion
+                # INT8 ops will still use quantized kernels, but intermediate layers stay float32
+                model = model.to(torch.float32)
                 if world_rank == 0:
                     print("✓ Successfully converted to INT8 quantized model", flush=True)
+                    print("✓ Forced all parameters to float32", flush=True)
                     print("="*80 + "\n", flush=True)
             except Exception as e:
                 if world_rank == 0:
