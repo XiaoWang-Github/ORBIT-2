@@ -19,30 +19,23 @@ import torch
 from pathlib import Path
 
 
-def get_checkpoint_filename(cp_save_path, epoch, rank, tensor_par_size):
+def get_checkpoint_filename(cp_save_path, epoch, rank=0, tensor_par_size=1):
     """Get checkpoint filename matching training format."""
-    if tensor_par_size > 1:
-        return os.path.join(cp_save_path, f"climate_epoch{epoch}_rank{rank}.pt")
-    else:
-        return os.path.join(cp_save_path, f"climate_epoch{epoch}.pt")
+    # Actual format: interm_epoch_48.ckpt
+    return os.path.join(cp_save_path, f"interm_epoch_{epoch}.ckpt")
 
 
 def find_checkpoint_epochs(checkpoint_dir, tensor_par_size=1):
     """Find all available checkpoint epochs."""
-    if tensor_par_size > 1:
-        pattern = os.path.join(checkpoint_dir, "climate_epoch*_rank0.pt")
-    else:
-        pattern = os.path.join(checkpoint_dir, "climate_epoch*.pt")
+    pattern = os.path.join(checkpoint_dir, "interm_epoch_*.ckpt")
     
     checkpoint_files = glob.glob(pattern)
     epochs = []
     
     for file_path in checkpoint_files:
         basename = os.path.basename(file_path)
-        if tensor_par_size > 1:
-            epoch_str = basename.split('_')[1].replace('epoch', '')
-        else:
-            epoch_str = basename.replace('climate_epoch', '').replace('.pt', '')
+        # Extract: interm_epoch_48.ckpt -> 48
+        epoch_str = basename.replace('interm_epoch_', '').replace('.ckpt', '')
         
         try:
             epoch = int(epoch_str)
@@ -137,9 +130,7 @@ def main():
             print(f"Not found: {checkpoint_path}")
             continue
         
-        output_path = get_checkpoint_filename(
-            args.output_dir, epoch, 0, 1
-        )
+        output_path = os.path.join(args.output_dir, f"interm_epoch_{epoch}_int8.ckpt")
         
         if os.path.exists(output_path):
             print(f"Epoch {epoch}: Already marked, skipping\n")
