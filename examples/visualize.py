@@ -154,32 +154,35 @@ def load_pretrained_weights(
         _load_pretrained_weights(model, pretrain_path, device, world_rank)
         
         # Check if this is a QAT checkpoint that should be converted to INT8
-        if world_rank == 0:
-            checkpoint = torch.load(pretrain_path, map_location='cpu')
-            quantization_info = checkpoint.get('quantization', {})
-            
-            if quantization_info.get('enabled'):
+        # Load checkpoint to check metadata (only rank 0 prints, but all ranks convert)
+        checkpoint = torch.load(pretrain_path, map_location='cpu')
+        quantization_info = checkpoint.get('quantization', {})
+        
+        if quantization_info.get('enabled'):
+            if world_rank == 0:
                 print("\n" + "="*80, flush=True)
                 print("QAT CHECKPOINT DETECTED", flush=True)
                 print("="*80, flush=True)
                 print(f"Precision: {quantization_info.get('precision', 'int8')}", flush=True)
                 print(f"Method: {quantization_info.get('method', 'qat')}", flush=True)
                 print("Converting model to INT8 for inference...", flush=True)
-                
-                try:
-                    from climate_learn.utils import qat_utils
-                    # Set model to eval mode before conversion
-                    model.eval()
-                    # Convert QAT model to true INT8
-                    model = qat_utils.convert_qat_to_quantized(model)
+            
+            try:
+                from climate_learn.utils import qat_utils
+                # Set model to eval mode before conversion
+                model.eval()
+                # Convert QAT model to true INT8 (ALL RANKS)
+                model = qat_utils.convert_qat_to_quantized(model)
+                if world_rank == 0:
                     print("✓ Successfully converted to INT8 quantized model", flush=True)
                     print("="*80 + "\n", flush=True)
-                except Exception as e:
+            except Exception as e:
+                if world_rank == 0:
                     print(f"WARNING: Failed to convert to INT8: {e}", flush=True)
                     print("Continuing with FP32 model...", flush=True)
                     print("="*80 + "\n", flush=True)
-            
-            del checkpoint
+        
+        del checkpoint
         
     else:
         print(
