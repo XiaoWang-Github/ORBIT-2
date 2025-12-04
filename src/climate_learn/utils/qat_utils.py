@@ -121,7 +121,8 @@ def convert_qat_to_quantized(model: nn.Module) -> nn.Module:
         model.eval()
     
     print("Removing FakeQuantize modules and applying true quantization...")
-    model_quantized = quant.convert(model, inplace=False)
+    # Use inplace=True to avoid deepcopying FSDP ProcessGroup objects which are not picklable
+    model_quantized = quant.convert(model, inplace=True)
     
     print("✓ Model converted to INT8")
     print("=" * 80 + "\n")
