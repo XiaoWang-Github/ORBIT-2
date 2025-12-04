@@ -130,6 +130,9 @@ def load_pretrained_weights(
         tensor_par_size (int): Size of tensor parallelism (default: 1)
         tensor_par_group: Process group for tensor parallelism (default: None)
         auto_wrap_policy: FSDP auto wrap policy
+        
+    Returns:
+        model: Model (possibly converted to INT8 if QAT checkpoint)
     """
     world_rank = dist.get_rank()
     local_rank = int(os.environ["SLURM_LOCALID"])
@@ -149,6 +152,35 @@ def load_pretrained_weights(
         sys.exit("pretrain_path is None - please specify pretrain path in config file")
     elif os.path.exists(pretrain_path):
         _load_pretrained_weights(model, pretrain_path, device, world_rank)
+        
+        # Check if this is a QAT checkpoint that should be converted to INT8
+        if world_rank == 0:
+            checkpoint = torch.load(pretrain_path, map_location='cpu')
+            quantization_info = checkpoint.get('quantization', {})
+            
+            if quantization_info.get('enabled'):
+                print("\n" + "="*80, flush=True)
+                print("QAT CHECKPOINT DETECTED", flush=True)
+                print("="*80, flush=True)
+                print(f"Precision: {quantization_info.get('precision', 'int8')}", flush=True)
+                print(f"Method: {quantization_info.get('method', 'qat')}", flush=True)
+                print("Converting model to INT8 for inference...", flush=True)
+                
+                try:
+                    from climate_learn.utils import qat_utils
+                    # Set model to eval mode before conversion
+                    model.eval()
+                    # Convert QAT model to true INT8
+                    model = qat_utils.convert_qat_to_quantized(model)
+                    print("✓ Successfully converted to INT8 quantized model", flush=True)
+                    print("="*80 + "\n", flush=True)
+                except Exception as e:
+                    print(f"WARNING: Failed to convert to INT8: {e}", flush=True)
+                    print("Continuing with FP32 model...", flush=True)
+                    print("="*80 + "\n", flush=True)
+            
+            del checkpoint
+        
     else:
         print(
             "resume from pretrained model was set to True. But the pretrained model path does not exist.",
@@ -157,6 +189,8 @@ def load_pretrained_weights(
         sys.exit("pretrain path does not exist")
 
     dist.barrier(device_ids=[local_rank])
+    
+    return model
 
 
 def main():
@@ -523,16 +557,6 @@ def main():
         )
 
     model = model.to(device)
-    
-    # Apply precision based on data_type setting
-    if data_type == "bfloat16":
-        model = model.to(torch.bfloat16)
-        if world_rank == 0:
-            print("✓ Model converted to bfloat16", flush=True)
-    elif data_type == "float32":
-        model = model.to(torch.float32)
-        if world_rank == 0:
-            print("✓ Model using float32", flush=True)
 
     # Get denormalization transform for converting model outputs back to physical units
     denorm = test_transforms[0]
@@ -543,13 +567,24 @@ def main():
     model.eval()
 
     # Load pretrained model weights from checkpoint
-    load_pretrained_weights(
+    model = load_pretrained_weights(
         model,
         pretrain_path,
         device,
         tensor_par_size=tensor_par_size,
         tensor_par_group=tensor_par_group,
     )
+    
+    # Apply precision based on data_type setting AFTER loading checkpoint
+    # This ensures all parameters (weights and biases) have consistent dtype
+    if data_type == "bfloat16":
+        model = model.to(torch.bfloat16)
+        if world_rank == 0:
+            print("✓ Model converted to bfloat16", flush=True)
+    elif data_type == "float32":
+        model = model.to(torch.float32)
+        if world_rank == 0:
+            print("✓ Model using float32", flush=True)
 
     if torch.distributed.get_rank() == 0:
         print("model is ", model, flush=True)
