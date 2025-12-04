@@ -9,7 +9,7 @@ trainer:
   batch_size: 32
   buffer_size: 400
   num_workers: 2
-  data_type: bfloat16
+  data_type: float32
   gpu_type: "amd"
   train_loss: "bayesian_tv"
 
