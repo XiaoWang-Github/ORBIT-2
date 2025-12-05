@@ -352,8 +352,9 @@ def process_single_tile(
     processor: "TileProcessor",
 ) -> Dict[str, np.ndarray]:
     """Process a single tile and return the results."""
-    # Move to device and run inference
-    x_tile = x_tile.to(device)
+    # Move to device and run inference - ensure input dtype matches model dtype
+    model_dtype = next(model.parameters()).dtype
+    x_tile = x_tile.to(device=device, dtype=model_dtype)
     pred = model.forward(x_tile, in_variables, out_variables)
     pred = clip_replace_constant(y_tile, pred, out_variables)
 
@@ -731,9 +732,11 @@ def visualize_batch(
             x_tile = x[:, :, coords.yi1 : coords.yi2, coords.xi1 : coords.xi2]
             y_tile = y[:, :, coords.yo1 : coords.yo2, coords.xo1 : coords.xo2]
 
-            # Inference
-            x_tile = x_tile.to(device)
-            y_tile_dev = y_tile.to(device)
+            # Inference - ensure input dtype matches model dtype
+            # Get model dtype from the first parameter
+            model_dtype = next(mm.parameters()).dtype
+            x_tile = x_tile.to(device=device, dtype=model_dtype)
+            y_tile_dev = y_tile.to(device=device, dtype=model_dtype)
             
             with torch.no_grad():
                 pred = mm.forward(x_tile, in_variables, out_variables)
