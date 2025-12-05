@@ -362,15 +362,16 @@ def process_single_tile(
     xx = x_tile[adj_index]
     temp = xx[in_channel]
     temp = temp.repeat(len(out_list), 1, 1)
-    img = in_transform(temp)[out_channel].detach().cpu().numpy()
+    # Convert to float32 before numpy (numpy doesn't support bfloat16)
+    img = in_transform(temp)[out_channel].detach().cpu().float().numpy()
 
     # Process prediction
     ppred = out_transform(pred.squeeze(0))
-    ppred = ppred[out_channel].detach().cpu().numpy()
+    ppred = ppred[out_channel].detach().cpu().float().numpy()
 
     # Process ground truth
     yy = out_transform(y_tile[adj_index])
-    yy = yy[out_channel].detach().cpu().numpy()
+    yy = yy[out_channel].detach().cpu().float().numpy()
 
     # Apply flips if needed
     if should_flip_image(src):
@@ -748,15 +749,16 @@ def visualize_batch(
                 xx = x_tile[i]
                 temp = xx[in_channel]
                 temp = temp.repeat(len(out_list), 1, 1)
-                img = in_transform(temp)[out_channel].detach().cpu().numpy()
+                # Convert to float32 before numpy (numpy doesn't support bfloat16)
+                img = in_transform(temp)[out_channel].detach().cpu().float().numpy()
 
                 # Prediction processing
                 ppred = out_transform(pred[i])
-                ppred = ppred[out_channel].detach().cpu().numpy()
+                ppred = ppred[out_channel].detach().cpu().float().numpy()
 
                 # Ground truth processing
                 yy = out_transform(y_tile[i])
-                yy = yy[out_channel].detach().cpu().numpy()
+                yy = yy[out_channel].detach().cpu().float().numpy()
 
                 current_coords = copy.deepcopy(coords)
                 if should_flip_image(src):
