@@ -9,6 +9,12 @@ Key Concepts:
   keeping gradients in FP32 for backward pass
 - Selective QAT: Only quantize Attention and MLP layers, keep CNN in FP16/32
 - Two-Phase Training: Normal training → QAT fine-tuning
+- Uses torch.ao.quantization (torch.quantization): PyTorch's native quantization API
+- NOT using bitsandbytes: bitsandbytes is for PTQ only (see quantization_utils.py)
+
+Workflow:
+1. Training: prepare_model_for_qat() → train with FakeQuantize → save checkpoint with metadata
+2. Inference: load checkpoint → detect metadata → convert_qat_to_quantized() → INT8 model
 
 Designed for AMD MI250X GPU with ROCm 6.4 environment.
 """
@@ -23,6 +29,7 @@ def prepare_model_for_qat(
     model: nn.Module,
     qconfig_spec: Optional[quant.QConfig] = None,
     attention_only: bool = True,
+    tensor_par_size: int = 1,
 ) -> nn.Module:
     """Prepare model for Quantization-Aware Training.
     
@@ -33,6 +40,8 @@ def prepare_model_for_qat(
         model: Res_Slim_ViT model to prepare for QAT
         qconfig_spec: Custom quantization config (default: fbgemm for x86)
         attention_only: If True, only quantize Attention + MLP (hybrid strategy)
+        tensor_par_size: Size of tensor parallelism (default: 1). When > 1, Linear layers
+                        are split across tensor parallel ranks, which is handled automatically.
         
     Returns:
         Model prepared for QAT with FakeQuantize modules inserted
@@ -46,6 +55,10 @@ def prepare_model_for_qat(
     print("\n" + "="*80)
     print("PREPARING MODEL FOR QAT (Quantization-Aware Training)")
     print("="*80)
+    
+    if tensor_par_size > 1:
+        print(f"NOTE: Tensor parallelism enabled (size={tensor_par_size}). "
+              f"QAT will be applied to split Linear layers.", flush=True)
     
     try:
         from climate_learn.models.hub.components.attention import (

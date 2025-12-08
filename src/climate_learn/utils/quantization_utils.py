@@ -114,31 +114,35 @@ def apply_dynamic_quantization(
     model: nn.Module,
     attention_only: bool = True,
     dtype: torch.dtype = torch.qint8,
-    device = None
+    device = None,
+    tensor_par_size: int = 1,
 ) -> nn.Module:
-    """Apply dynamic quantization to model.
+    """Apply Post-Training Quantization (PTQ) to model.
     
-    Dynamic quantization quantizes weights offline and activations dynamically
-    during runtime. This is simpler than static quantization and doesn't require
-    calibration data.
+    This function supports two quantization backends:
+    1. bitsandbytes (GPU-native, preferred for ROCm): Replaces Linear layers with Linear8bitLt
+    2. PyTorch native (CPU-only): Uses torch.quantization.quantize_dynamic()
     
-    NOTE: PyTorch quantization only works on CPU. This function will:
-    1. Move model to CPU
-    2. Apply quantization
-    3. Move model back to original device (if provided)
+    NOTE: This is for PTQ only. For QAT (Quantization-Aware Training), use qat_utils instead.
     
     Args:
         model: PyTorch model to quantize
         attention_only: If True, only quantize attention layers (hybrid strategy)
         dtype: Quantization data type (torch.qint8)
         device: Original device to move model back to after quantization (can be int or torch.device)
+        tensor_par_size: Size of tensor parallelism (default: 1). When > 1, Linear layers
+                        are split across tensor parallel ranks, which is handled automatically.
         
     Returns:
         Quantized model (on CPU or moved back to device if specified)
     """
     print("\n" + "="*80, flush=True)
-    print("APPLYING DYNAMIC QUANTIZATION", flush=True)
+    print("APPLYING POST-TRAINING QUANTIZATION (PTQ)", flush=True)
     print("="*80, flush=True)
+    
+    if tensor_par_size > 1:
+        print(f"NOTE: Tensor parallelism enabled (size={tensor_par_size}). "
+              f"Quantization will be applied to split Linear layers.", flush=True)
     
     # Handle device conversion
     original_device = None
@@ -357,29 +361,69 @@ def print_model_quantization_summary(model: nn.Module):
     print("MODEL QUANTIZATION SUMMARY", flush=True)
     print("="*80, flush=True)
     
+    # Check for bitsandbytes availability
+    try:
+        import bitsandbytes as bnb
+        has_bitsandbytes = True
+    except ImportError:
+        has_bitsandbytes = False
+    
     total_params = 0
     quantized_params = 0
+    bnb_quantized_params = 0
+    pytorch_quantized_params = 0
     
     layer_info = []
     
     for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
-            num_params = sum(p.numel() for p in module.parameters())
-            total_params += num_params
-            layer_info.append((name, "FP32", num_params))
-        elif isinstance(module, (nn.quantized.Linear, nn.quantized.dynamic.Linear)):
-            # Quantized layers - estimate params (weight is quantized INT8)
+        num_params = 0
+        precision = "FP32"
+        
+        # Check for PyTorch native quantized layers (from QAT or PTQ using torch.ao.quantization)
+        if isinstance(module, (nn.quantized.Linear, nn.quantized.dynamic.Linear)):
+            # PyTorch native quantized layers (torch.ao.quantization)
+            # These can come from:
+            # 1. QAT: convert_qat_to_quantized() converts FakeQuantize → quantized layers
+            # 2. PTQ: torch.quantization.quantize_dynamic() creates quantized layers
             num_params = sum(p.numel() for p in module.parameters() if hasattr(p, 'numel'))
             quantized_params += num_params
+            pytorch_quantized_params += num_params
             total_params += num_params
-            layer_info.append((name, "INT8", num_params))
+            # Distinguish between static and dynamic quantization
+            if isinstance(module, nn.quantized.Linear):
+                precision = "INT8 (QAT/PTQ)"
+            else:  # nn.quantized.dynamic.Linear
+                precision = "INT8 (PTQ-dyn)"
+            layer_info.append((name, precision, num_params))
+        # Check for bitsandbytes quantized layers (PTQ only, not used in QAT)
+        elif has_bitsandbytes and isinstance(module, bnb.nn.Linear8bitLt):
+            # bitsandbytes 8-bit linear layer (PTQ only, GPU-native)
+            if hasattr(module, 'weight'):
+                # Estimate: weight is quantized to INT8, but stored with quantization state
+                # For summary purposes, count the original parameter size
+                if hasattr(module.weight, 'data'):
+                    num_params = module.weight.data.numel()
+                else:
+                    num_params = sum(p.numel() for p in module.parameters() if hasattr(p, 'numel'))
+            else:
+                num_params = sum(p.numel() for p in module.parameters() if hasattr(p, 'numel'))
+            quantized_params += num_params
+            bnb_quantized_params += num_params
+            total_params += num_params
+            precision = "INT8 (bnb-PTQ)"
+            layer_info.append((name, precision, num_params))
+        elif isinstance(module, nn.Linear):
+            # Regular FP32/FP16 linear layer
+            num_params = sum(p.numel() for p in module.parameters())
+            total_params += num_params
+            layer_info.append((name, precision, num_params))
     
     # Print table
-    print(f"\n{'Layer Name':<50} {'Precision':<10} {'Parameters':>15}", flush=True)
+    print(f"\n{'Layer Name':<50} {'Precision':<15} {'Parameters':>15}", flush=True)
     print("-" * 80, flush=True)
     
     for name, precision, params in layer_info[:20]:  # Show first 20
-        print(f"{name:<50} {precision:<10} {params:>15,}", flush=True)
+        print(f"{name:<50} {precision:<15} {params:>15,}", flush=True)
     
     if len(layer_info) > 20:
         print(f"... and {len(layer_info) - 20} more layers", flush=True)
@@ -387,9 +431,16 @@ def print_model_quantization_summary(model: nn.Module):
     print("-" * 80, flush=True)
     print(f"Total parameters: {total_params:,}", flush=True)
     print(f"Quantized parameters (INT8): {quantized_params:,}", flush=True)
+    if pytorch_quantized_params > 0:
+        print(f"  - PyTorch native (torch.ao): {pytorch_quantized_params:,} "
+              f"(QAT or PTQ)", flush=True)
+    if has_bitsandbytes and bnb_quantized_params > 0:
+        print(f"  - bitsandbytes (PTQ only): {bnb_quantized_params:,}", flush=True)
     
     if total_params > 0:
         quant_ratio = (quantized_params / total_params) * 100
         print(f"Quantization ratio: {quant_ratio:.2f}%", flush=True)
+    else:
+        print("WARNING: No parameters found in model", flush=True)
     
     print("="*80 + "\n", flush=True)

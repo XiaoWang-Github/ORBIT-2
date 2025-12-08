@@ -636,12 +636,16 @@ def main():
                 else:
                     print("Applying FULL model quantization (all layers INT8)...", flush=True)
             
+            # Get tensor_par_size from config for quantization compatibility
+            tensor_par_size = conf["parallelism"]["tensor_par"]
+            
             # Apply dynamic quantization (will move to CPU, quantize, then try to move back)
             model = quantization_utils.apply_dynamic_quantization(
                 model,
                 attention_only=attention_only,
                 dtype=torch.qint8,
-                device=device
+                device=device,
+                tensor_par_size=tensor_par_size,
             )
             
             # Print quantization summary

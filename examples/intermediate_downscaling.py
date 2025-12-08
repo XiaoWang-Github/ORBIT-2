@@ -691,6 +691,8 @@ def run_training_epochs(
             local_rank,
             tensor_par_size,
             device,
+            use_qat=use_qat,
+            qat_start_epoch=qat_start_epoch,
         )
 
     return epoch_end
@@ -706,6 +708,8 @@ def save_checkpoint(
     local_rank,
     tensor_par_size,
     device,
+    use_qat=False,
+    qat_start_epoch=0,
 ):
     """
     Save model checkpoint to disk.
@@ -720,6 +724,8 @@ def save_checkpoint(
         local_rank (int): Local rank for the current process
         tensor_par_size (int): Size of tensor parallelism
         device: Current device
+        use_qat (bool): Whether QAT is enabled
+        qat_start_epoch (int): Epoch when QAT was activated
     """
     # Create checkpoint directory if needed (only on rank 0)
     if world_rank == 0:
@@ -736,6 +742,9 @@ def save_checkpoint(
     optimizer_states = optimizer.state_dict()
     scheduler_states = scheduler.state_dict()
 
+    # Determine if QAT is currently active
+    qat_active = use_qat and epoch >= qat_start_epoch
+
     # Save checkpoint only for ranks that are part of tensor parallelism
     if world_rank < tensor_par_size:
         file_name = get_checkpoint_filename(
@@ -748,6 +757,26 @@ def save_checkpoint(
             "optimizer_state_dict": optimizer_states,
             "scheduler_state_dict": scheduler_states,
         }
+
+        # Add quantization metadata if QAT is enabled
+        # This metadata allows visualize.py to automatically detect QAT checkpoints
+        # and convert them to INT8 using convert_qat_to_quantized()
+        # Note: convert_to_int8_simple.py is now optional since metadata is saved during training
+        if use_qat:
+            from climate_learn.utils import qat_utils
+            qat_status = qat_utils.check_qat_status(model)
+            checkpoint_dict["quantization"] = {
+                "enabled": True,
+                "method": "qat",
+                "precision": "int8",
+                "qat_start_epoch": qat_start_epoch,
+                "qat_active": qat_active,
+                "has_fake_quant": qat_status.get("has_fake_quant", False),
+                "num_fake_quant_modules": qat_status.get("num_fake_quant_modules", 0),
+            }
+            if world_rank == 0:
+                print(f"Added quantization metadata: QAT active={qat_active}, "
+                      f"FakeQuant modules={qat_status.get('num_fake_quant_modules', 0)}", flush=True)
 
         torch.save(checkpoint_dict, file_name)
 
@@ -1142,14 +1171,17 @@ def main(device):
                     tensor_par_group=tensor_par_group,
                 )
                 
-                # Prepare model for QAT if enabled
+                # Prepare model for QAT if enabled (before FSDP wrapping)
+                # Note: QAT preparation must happen before FSDP wrapping because
+                # prepare_qat modifies the model structure by inserting FakeQuantize modules
                 if use_qat:
                     if world_rank == 0:
-                        print("\nPreparing model for QAT...", flush=True)
+                        print("\nPreparing model for QAT (before FSDP wrapping)...", flush=True)
                     from climate_learn.utils import qat_utils
                     model = qat_utils.prepare_model_for_qat(
                         model, 
-                        attention_only=True
+                        attention_only=True,
+                        tensor_par_size=tensor_par_size,
                     )
                     # Start with QAT disabled (will enable at qat_start_epoch)
                     qat_utils.enable_qat_mode(model, enable=False)
@@ -1234,6 +1266,19 @@ def main(device):
                         forward_prefetch=True,
                         limit_all_gathers=False,
                     )
+
+            # Verify QAT status after FSDP wrapping (for logging/debugging)
+            if use_qat:
+                if world_rank == 0:
+                    print("\nVerifying QAT status after FSDP wrapping...", flush=True)
+                from climate_learn.utils import qat_utils
+                qat_status = qat_utils.check_qat_status(model)
+                if world_rank == 0:
+                    print(f"QAT Status: has_fake_quant={qat_status['has_fake_quant']}, "
+                          f"num_modules={qat_status['num_fake_quant_modules']}", flush=True)
+                    if not qat_status['has_fake_quant']:
+                        print("WARNING: No FakeQuantize modules found after FSDP wrapping!", flush=True)
+                    print("="*80 + "\n", flush=True)
 
             # Update spatial resolution, image size, and number of variables to model
             # based on datasets
