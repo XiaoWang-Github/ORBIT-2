@@ -4,6 +4,11 @@
 This script marks QAT checkpoints as INT8-ready for deployment.
 The actual INT8 conversion happens during model loading in inference.
 
+NOTE: This script is now OPTIONAL for newly trained checkpoints.
+- New checkpoints (trained with updated code) already include quantization metadata
+- visualize.py will automatically detect and convert QAT checkpoints
+- This script is only needed for legacy checkpoints that lack metadata
+
 Usage:
     python convert_to_int8_simple.py
     
