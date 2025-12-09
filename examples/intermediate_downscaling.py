@@ -638,6 +638,9 @@ def run_training_epochs(
     Returns:
         int: Final epoch number
     """
+    if world_rank == 0:
+        print("Entering run_training_epochs...", flush=True)
+
     for epoch in range(epoch_start, epoch_end):
         # Activate QAT at specified epoch
         if use_qat and epoch == qat_start_epoch:
@@ -661,9 +664,11 @@ def run_training_epochs(
         
         if world_rank == 0:
             print(f"Starting epoch {epoch}", flush=True)
+            print("Getting first batch from train_dataloader...", flush=True)
 
         for batch_idx, batch in enumerate(train_dataloader):
             if world_rank == 0:
+                print(f"Processing batch {batch_idx}...", flush=True)
                 torch.cuda.synchronize(device=device)
                 tic1 = time.perf_counter()
 
