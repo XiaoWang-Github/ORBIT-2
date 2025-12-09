@@ -297,26 +297,57 @@ def training_step(
     x = x.to(device)
     y = y.to(device)
 
-    yhat = net.forward(x, in_variables, out_variables)
-    yhat = clip_replace_constant(y, yhat, out_variables)
+    debug_print(f"[{dist.get_rank()}] training_step: Batch {batch_idx} - Input x shape: {x.shape}, dtype: {x.dtype}")
+    debug_print(f"[{dist.get_rank()}] training_step: Input x stats: min={x.min()}, max={x.max()}, mean={x.mean()}, std={x.std()}")
+    debug_print(f"[{dist.get_rank()}] training_step: Input x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}")
+    debug_print(f"[{dist.get_rank()}] training_step: Batch {batch_idx} - Target y shape: {y.shape}, dtype: {y.dtype}")
+    debug_print(f"[{dist.get_rank()}] training_step: Target y stats: min={y.min()}, max={y.max()}, mean={y.mean()}, std={y.std()}")
+    debug_print(f"[{dist.get_rank()}] training_step: Target y NaN/Inf: NaN={torch.isnan(y).any()}, Inf={torch.isinf(y).any()}")
 
-    if y.size(dim=2) != yhat.size(dim=2) or y.size(dim=3) != yhat.size(dim=3):
-        losses = train_loss_metric(
-            yhat,
-            y[:, :, 0 : yhat.size(dim=2), 0 : yhat.size(dim=3)],
-            var_names=out_variables,
-            var_weights=var_weights,
-        )
-    else:
+    try:
+        yhat = net.forward(x, in_variables, out_variables)
+        debug_print(f"[{dist.get_rank()}] training_step: After net.forward - yhat shape: {yhat.shape}, dtype: {yhat.dtype}")
+        debug_print(f"[{dist.get_rank()}] training_step: yhat stats: min={yhat.min()}, max={yhat.max()}, mean={yhat.mean()}, std={yhat.std()}")
+        debug_print(f"[{dist.get_rank()}] training_step: yhat NaN/Inf: NaN={torch.isnan(yhat).any()}, Inf={torch.isinf(yhat).any()}")
+    except Exception as e:
+        debug_print(f"[{dist.get_rank()}] CRITICAL ERROR in net.forward: {e}")
+        raise e
 
-        losses = train_loss_metric(
-            yhat, y, var_names=out_variables, var_weights=var_weights
-        )
+    try:
+        yhat = clip_replace_constant(y, yhat, out_variables)
+        debug_print(f"[{dist.get_rank()}] training_step: After clip_replace_constant - yhat stats: min={yhat.min()}, max={yhat.max()}, mean={yhat.mean()}, std={yhat.std()}")
+        debug_print(f"[{dist.get_rank()}] training_step: yhat (after clip) NaN/Inf: NaN={torch.isnan(yhat).any()}, Inf={torch.isinf(yhat).any()}")
+    except Exception as e:
+        debug_print(f"[{dist.get_rank()}] CRITICAL ERROR in clip_replace_constant: {e}")
+        raise e
+
+    try:
+        if y.size(dim=2) != yhat.size(dim=2) or y.size(dim=3) != yhat.size(dim=3):
+            losses = train_loss_metric(
+                yhat,
+                y[:, :, 0 : yhat.size(dim=2), 0 : yhat.size(dim=3)],
+                var_names=out_variables,
+                var_weights=var_weights,
+            )
+        else:
+            losses = train_loss_metric(
+                yhat, y, var_names=out_variables, var_weights=var_weights
+            )
+        debug_print(f"[{dist.get_rank()}] training_step: After train_loss_metric - losses shape: {losses.shape}, dtype: {losses.dtype}")
+        debug_print(f"[{dist.get_rank()}] training_step: losses stats: min={losses.min()}, max={losses.max()}, mean={losses.mean()}, std={losses.std()}")
+        debug_print(f"[{dist.get_rank()}] training_step: losses NaN/Inf: NaN={torch.isnan(losses).any()}, Inf={torch.isinf(losses).any()}")
+    except Exception as e:
+        debug_print(f"[{dist.get_rank()}] CRITICAL ERROR in train_loss_metric: {e}")
+        raise e
+
     loss_name = getattr(train_loss_metric, "name", "loss")
     if losses.dim() == 0:  # aggregate loss only
         loss = losses
     else:  # per channel + aggregate
         loss = losses[-1]
+
+    debug_print(f"[{dist.get_rank()}] training_step: Final loss value: {loss.item()}")
+    debug_print(f"[{dist.get_rank()}] training_step: Final loss NaN/Inf: NaN={torch.isnan(loss).any()}, Inf={torch.isinf(loss).any()}")
 
     return loss
 
@@ -1412,6 +1443,7 @@ if __name__ == "__main__":
         rank=world_rank,
         world_size=world_size,
     )
+    torch.autograd.set_detect_anomaly(True)
 
     print("Using dist.init_process_group. world_size ", world_size, flush=True)
 
