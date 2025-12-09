@@ -104,7 +104,7 @@ class PureInt8Matmul(Function):
         
         # 3. Perform INT8 matrix multiplication (accumulates in INT32 on MI250x)
         # Reshape input to 2D to ensure compatibility with ROCm/MI250x INT8/INT32 matmul
-        input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1])
+        input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1]).contiguous()
         debug_print(f"Flattened input for matmul: {input_int8_flattened.shape}")
         
         output_int32_accum_flattened = torch.matmul(input_int8_flattened.to(torch.int32), weight_int8.to(torch.int32).t())
