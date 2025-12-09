@@ -2,6 +2,21 @@ import torch
 import torch.nn as nn
 from torch.autograd import Function
 import math
+import torch.distributed as dist
+import os
+
+def debug_print(*args, **kwargs):
+    # Check rank using dist or env vars (fallback)
+    rank = 0
+    if dist.is_initialized():
+        rank = dist.get_rank()
+    elif "RANK" in os.environ:
+        rank = int(os.environ["RANK"])
+    elif "SLURM_PROCID" in os.environ:
+        rank = int(os.environ["SLURM_PROCID"])
+    
+    if rank == 0:
+        print("[INT8_DEBUG]", *args, **kwargs, flush=True)
 
 # --- Quantization and Dequantization Helper Functions ---
 
@@ -16,7 +31,8 @@ def get_scale_shift(tensor_abs_max):
     # We want to scale such that max_val * scale_factor is close to 127.
     # scale_factor = 2^shift_amount
     # So, shift_amount = log2(127 / tensor_abs_max)
-    shift_amount_float = math.log2(127.0 / tensor_abs_max.item())
+    # Add epsilon to prevent log(0) just in case, though the if check handles exact 0
+    shift_amount_float = math.log2(127.0 / (tensor_abs_max.item() + 1e-9))
     
     # Round to nearest integer shift amount for bit-shift approximation
     shift_amount = round(shift_amount_float)
@@ -64,12 +80,21 @@ class PureInt8Matmul(Function):
     """
     @staticmethod
     def forward(ctx, input_fp32, weight_fp32, bias_fp32):
+        # debug_print(f"PureInt8Matmul.forward: start. Input shape: {input_fp32.shape}")
+        
+        if torch.isnan(input_fp32).any():
+             debug_print("CRITICAL: NaN detected in input_fp32")
+        if torch.isnan(weight_fp32).any():
+             debug_print("CRITICAL: NaN detected in weight_fp32")
+
         # 1. Determine shift amounts for input and weight
         input_abs_max = input_fp32.abs().max()
         weight_abs_max = weight_fp32.abs().max()
 
         input_shift, input_scale_factor = get_scale_shift(input_abs_max)
         weight_shift, weight_scale_factor = get_scale_shift(weight_abs_max)
+        
+        # debug_print(f"Shifts - Input: {input_shift}, Weight: {weight_shift}")
 
         # 2. Quantize input and weight to INT8 using bit-shift logic
         input_int8 = quantize_to_int8_shifted(input_fp32, input_shift, stochastic=False)
@@ -101,16 +126,22 @@ class PureInt8Matmul(Function):
             output_dequant += bias_fp32 
 
         # Store quantized inputs, weights, and shifts for backward
-        ctx.save_for_backward(input_int8, weight_int8) # Store int8 tensors
+        ctx.save_for_backward(input_int8, weight_int8) # Store int8 tensors for backward
         ctx.input_shift = input_shift
         ctx.weight_shift = weight_shift
         ctx.output_shift = output_shift # Shift used for output of forward
         ctx.input_fp32_shape = input_fp32.shape # Save original float shape
 
+        # debug_print("PureInt8Matmul.forward: end")
         return output_dequant # Return FP32 for now, as subsequent layers expect it.
 
     @staticmethod
     def backward(ctx, grad_output_fp32):
+        # debug_print(f"PureInt8Matmul.backward: start. Grad shape: {grad_output_fp32.shape}")
+        
+        if torch.isnan(grad_output_fp32).any():
+             debug_print("CRITICAL: NaN detected in grad_output_fp32")
+
         input_int8, weight_int8 = ctx.saved_tensors
         input_shift = ctx.input_shift
         weight_shift = ctx.weight_shift
@@ -118,39 +149,44 @@ class PureInt8Matmul(Function):
 
         grad_input = grad_weight = grad_bias = None
 
-        # 1. Quantize grad_output to INT8 using a new dynamic shift (with stochastic rounding)
-        grad_output_abs_max = grad_output_fp32.abs().max()
-        grad_output_shift, _ = get_scale_shift(grad_output_abs_max)
-        grad_output_int8 = quantize_to_int8_shifted(grad_output_fp32, grad_output_shift, stochastic=True) # Stochastic rounding for gradients
+        try:
+            # 1. Quantize grad_output to INT8 using a new dynamic shift (with stochastic rounding)
+            grad_output_abs_max = grad_output_fp32.abs().max()
+            grad_output_shift, _ = get_scale_shift(grad_output_abs_max)
+            grad_output_int8 = quantize_to_int8_shifted(grad_output_fp32, grad_output_shift, stochastic=True) # Stochastic rounding for gradients
 
-        # 2. Calculate gradients using INT8 matmul
-        # dW = input.T @ grad_output
-        if ctx.needs_input_grad[1]:
-            # Scale factor for dW should be (1 / 2^input_shift) * (1 / 2^grad_output_shift)
-            # So, the dequantization requires dividing by 2^(input_shift + grad_output_shift)
-            grad_weight_int32_accum = torch.matmul(input_int8.to(torch.int32).transpose(-2, -1), grad_output_int8.to(torch.int32))
-            
-            # Determine effective shift for grad_weight_int32_accum
-            # This is complex, but conceptually, we use the original shifts
-            grad_weight_dequant_shift = input_shift + grad_output_shift
-            grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.int8), grad_weight_dequant_shift) # Placeholder conversion to int8 then dequant
+            # 2. Calculate gradients using INT8 matmul
+            # dW = input.T @ grad_output
+            if ctx.needs_input_grad[1]:
+                # Scale factor for dW should be (1 / 2^input_shift) * (1 / 2^grad_output_shift)
+                # So, the dequantization requires dividing by 2^(input_shift + grad_output_shift)
+                grad_weight_int32_accum = torch.matmul(input_int8.to(torch.int32).transpose(-2, -1), grad_output_int8.to(torch.int32))
+                
+                # Determine effective shift for grad_weight_int32_accum
+                # This is complex, but conceptually, we use the original shifts
+                grad_weight_dequant_shift = input_shift + grad_output_shift
+                grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.int8), grad_weight_dequant_shift) # Placeholder conversion to int8 then dequant
 
-        # dX = grad_output @ weight.T
-        if ctx.needs_input_grad[0]:
-            # Scale factor for dX should be (1 / 2^grad_output_shift) * (1 / 2^weight_shift)
-            # So, the dequantization requires dividing by 2^(grad_output_shift + weight_shift)
-            grad_input_int32_accum = torch.matmul(grad_output_int8.to(torch.int32), weight_int8.to(torch.int32))
-            
-            # Determine effective shift for grad_input_int32_accum
-            grad_input_dequant_shift = grad_output_shift + weight_shift
-            grad_input = dequantize_from_int8_shifted(grad_input_int32_accum.to(torch.int8), grad_input_dequant_shift) # Placeholder conversion to int8 then dequant
-            grad_input = grad_input.reshape(ctx.input_fp32_shape)
+            # dX = grad_output @ weight.T
+            if ctx.needs_input_grad[0]:
+                # Scale factor for dX should be (1 / 2^grad_output_shift) * (1 / 2^weight_shift)
+                # So, the dequantization requires dividing by 2^(grad_output_shift + weight_shift)
+                grad_input_int32_accum = torch.matmul(grad_output_int8.to(torch.int32), weight_int8.to(torch.int32))
+                
+                # Determine effective shift for grad_input_int32_accum
+                grad_input_dequant_shift = grad_output_shift + weight_shift
+                grad_input = dequantize_from_int8_shifted(grad_input_int32_accum.to(torch.int8), grad_input_dequant_shift) # Placeholder conversion to int8 then dequant
+                grad_input = grad_input.reshape(ctx.input_fp32_shape)
 
 
-        # dBias = grad_output.sum(0)
-        if ctx.needs_input_grad[2] and bias_fp32 is not None:
-            grad_bias = grad_output_fp32.sum(0) # Bias gradient remains FP32 for now
+            # dBias = grad_output.sum(0)
+            if ctx.needs_input_grad[2] and bias_fp32 is not None:
+                grad_bias = grad_output_fp32.sum(0) # Bias gradient remains FP32 for now
+        except Exception as e:
+            debug_print(f"CRITICAL ERROR in Backward: {e}")
+            raise e
 
+        # debug_print("PureInt8Matmul.backward: end")
         return grad_input, grad_weight, grad_bias
 
 

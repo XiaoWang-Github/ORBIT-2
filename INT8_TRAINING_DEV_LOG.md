@@ -31,6 +31,8 @@ We are adopting an aggressive **"Pure INT8 Backward"** strategy. Unlike conventi
 
 ### Phase 2: Integration & Stability
 - [x] Replace standard `nn.Linear` in `Mlp` and `Attention` blocks with `PureInt8Linear`.
+- [x] Initial stability test run (Failed silently, suspecting segmentation fault or NaN explosion).
+- [ ] **Debugging:** Instrument `PureInt8Linear` with logs and NaN checks to pinpoint failure location.
 - [ ] Verify numerical stability (check for loss crashes or stagnation).
 
 ### Phase 3: Optimization & Benchmarking
@@ -54,3 +56,8 @@ We are adopting an aggressive **"Pure INT8 Backward"** strategy. Unlike conventi
 -   Refined `quantize_to_int8_shifted` and `dequantize_from_int8_shifted` to use bit-shift like scaling.
 -   Updated `PureInt8Matmul` to incorporate the new scaling functions.
 -   Completed initial implementation for Phase 1.
+
+### 2025-12-09: First Stability Test & Debugging
+-   Submitted initial test job to Frontier.
+-   Result: Job failed silently without python traceback. Ominstat report showed low GPU utilization.
+-   Action: Instrumented `pure_int8_linear.py` with `debug_print` and critical NaN checks to catch silent failures in C++ land or distributed training hang.
