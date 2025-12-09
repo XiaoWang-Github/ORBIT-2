@@ -169,40 +169,58 @@ class PureInt8Matmul(Function):
         grad_input = grad_weight = grad_bias = None
 
         try:
+            debug_print(f"Before quantizing grad_output. grad_output_fp32 shape: {grad_output_fp32.shape}")
             # 1. Quantize grad_output to INT8 using a new dynamic shift (with stochastic rounding)
             grad_output_abs_max = grad_output_fp32.abs().max()
             grad_output_shift, _ = get_scale_shift(grad_output_abs_max)
             grad_output_int8 = quantize_to_int8_shifted(grad_output_fp32, grad_output_shift, stochastic=True) # Stochastic rounding for gradients
+            debug_print(f"After quantizing grad_output. grad_output_int8 shape: {grad_output_int8.shape}, grad_output_shift: {grad_output_shift}")
 
             # 2. Calculate gradients using INT8 matmul
             # dW = input.T @ grad_output
             if ctx.needs_input_grad[1]:
-                # Scale factor for dW should be (1 / 2^input_shift) * (1 / 2^grad_output_shift)
-                # So, the dequantization requires dividing by 2^(input_shift + grad_output_shift)
-                grad_weight_int32_accum = torch.matmul(input_int8.to(torch.int32).transpose(-2, -1), grad_output_int8.to(torch.int32))
+                debug_print(f"Before calculating grad_weight. input_int8 shape: {input_int8.shape}, grad_output_int8 shape: {grad_output_int8.shape}")
+                # Reshape for matmul
+                input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1]).contiguous()
+                grad_output_int8_flattened = grad_output_int8.reshape(-1, grad_output_int8.shape[-1]).contiguous() # Assuming grad_output_int8 could be 3D
                 
-                # Determine effective shift for grad_weight_int32_accum
-                # This is complex, but conceptually, we use the original shifts
+                grad_weight_fp32_accum_flattened = torch.matmul(input_int8_flattened.to(torch.float32).transpose(-2, -1), grad_output_int8_flattened.to(torch.float32))
+                debug_print(f"After matmul for grad_weight: grad_weight_fp32_accum_flattened shape: {grad_weight_fp32_accum_flattened.shape}")
+                
+                # Reshape back if necessary (original weight is 2D)
+                # The result of input_T @ grad_output should be the shape of weight (out_features, in_features)
+                grad_weight_fp32_accum = grad_weight_fp32_accum_flattened.reshape(weight_int8.shape[0], weight_int8.shape[1])
+
                 grad_weight_dequant_shift = input_shift + grad_output_shift
-                # Fix: Don't cast to int8 before dequantizing. Convert to float first.
-                grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.float32), grad_weight_dequant_shift) 
+                debug_print(f"Before dequantizing grad_weight. grad_weight_dequant_shift: {grad_weight_dequant_shift}")
+                grad_weight = dequantize_from_int8_shifted(grad_weight_fp32_accum, grad_weight_dequant_shift) 
+                debug_print(f"After dequantizing grad_weight. grad_weight shape: {grad_weight.shape}")
 
             # dX = grad_output @ weight.T
             if ctx.needs_input_grad[0]:
-                # Scale factor for dX should be (1 / 2^grad_output_shift) * (1 / 2^weight_shift)
-                # So, the dequantization requires dividing by 2^(grad_output_shift + weight_shift)
-                grad_input_int32_accum = torch.matmul(grad_output_int8.to(torch.int32), weight_int8.to(torch.int32))
+                debug_print(f"Before calculating grad_input. grad_output_int8 shape: {grad_output_int8.shape}, weight_int8 shape: {weight_int8.shape}")
+                # Reshape for matmul
+                # grad_output_int8_flattened already exists
+                weight_int8_t_flattened = weight_int8.to(torch.float32).t() # No need to flatten weight_int8_t as it's already 2D
                 
-                # Determine effective shift for grad_input_int32_accum
-                grad_input_dequant_shift = grad_output_shift + weight_shift
-                # Fix: Don't cast to int8 before dequantizing. Convert to float first.
-                grad_input = dequantize_from_int8_shifted(grad_input_int32_accum.to(torch.float32), grad_input_dequant_shift) 
-                grad_input = grad_input.reshape(ctx.input_fp32_shape)
+                grad_input_fp32_accum_flattened = torch.matmul(grad_output_int8_flattened.to(torch.float32), weight_int8_t_flattened)
+                debug_print(f"After matmul for grad_input: grad_input_fp32_accum_flattened shape: {grad_input_fp32_accum_flattened.shape}")
+                
+                # Reshape back to original input shape (batch dims + in_features)
+                grad_input_fp32_accum = grad_input_fp32_accum_flattened.reshape(ctx.input_fp32_shape[0], ctx.input_fp32_shape[1], ctx.input_fp32_shape[2])
 
+
+                grad_input_dequant_shift = grad_output_shift + weight_shift
+                debug_print(f"Before dequantizing grad_input. grad_input_dequant_shift: {grad_input_dequant_shift}")
+                grad_input = dequantize_from_int8_shifted(grad_input_fp32_accum, grad_input_dequant_shift) 
+                grad_input = grad_input.reshape(ctx.input_fp32_shape)
+                debug_print(f"After dequantizing grad_input. grad_input shape: {grad_input.shape}")
 
             # dBias = grad_output.sum(0)
             if ctx.needs_input_grad[2] and ctx.has_bias:
+                debug_print("Before calculating grad_bias.")
                 grad_bias = grad_output_fp32.sum(0) # Bias gradient remains FP32 for now
+                debug_print(f"After calculating grad_bias. grad_bias shape: {grad_bias.shape}")
         except Exception as e:
             debug_print(f"CRITICAL ERROR in Backward: {e}")
             raise e
