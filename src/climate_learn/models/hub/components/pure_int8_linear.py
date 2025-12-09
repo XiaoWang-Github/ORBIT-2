@@ -112,6 +112,8 @@ class PureInt8Matmul(Function):
         # _int_mm requires both inputs to be contiguous.
         weight_int8_t_contiguous = weight_int8.t().contiguous()
         
+        debug_print(f"Calling _int_mm (forward) with input shape: {input_int8_flattened.shape}, dtype: {input_int8_flattened.dtype}")
+        debug_print(f"Calling _int_mm (forward) with weight_t shape: {weight_int8_t_contiguous.shape}, dtype: {weight_int8_t_contiguous.dtype}")
         # Output is INT32
         output_int32_accum_flattened = torch._int_mm(input_int8_flattened, weight_int8_t_contiguous)
         
@@ -194,6 +196,8 @@ class PureInt8Matmul(Function):
                 # So we compute grad_output.T @ input.
                 grad_output_t_contiguous = grad_output_int8_flattened.t().contiguous()
                 
+                debug_print(f"Calling _int_mm (grad_weight) with grad_output_t shape: {grad_output_t_contiguous.shape}, dtype: {grad_output_t_contiguous.dtype}")
+                debug_print(f"Calling _int_mm (grad_weight) with input shape: {input_int8_flattened.shape}, dtype: {input_int8_flattened.dtype}")
                 grad_weight_int32_accum = torch._int_mm(grad_output_t_contiguous, input_int8_flattened)
                 debug_print(f"After matmul for grad_weight: grad_weight_int32_accum shape: {grad_weight_int32_accum.shape}")
                 
@@ -218,6 +222,8 @@ class PureInt8Matmul(Function):
                 # Ensure weight is contiguous (it should be, but safety first)
                 weight_int8_contiguous = weight_int8.contiguous()
                 
+                debug_print(f"Calling _int_mm (grad_input) with grad_output shape: {grad_output_int8_flattened.shape}, dtype: {grad_output_int8_flattened.dtype}")
+                debug_print(f"Calling _int_mm (grad_input) with weight shape: {weight_int8_contiguous.shape}, dtype: {weight_int8_contiguous.dtype}")
                 grad_input_int32_accum_flattened = torch._int_mm(grad_output_int8_flattened, weight_int8_contiguous)
                 debug_print(f"After matmul for grad_input: grad_input_int32_accum_flattened shape: {grad_input_int32_accum_flattened.shape}")
                 
