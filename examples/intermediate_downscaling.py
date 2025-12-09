@@ -298,28 +298,28 @@ def training_step(
     x = x.to(device)
     y = y.to(device)
 
-    debug_print(f"[{dist.get_rank()}] training_step: Batch {batch_idx} - Input x shape: {x.shape}, dtype: {x.dtype}")
-    debug_print(f"[{dist.get_rank()}] training_step: Input x stats: min={x.min()}, max={x.max()}, mean={x.mean()}, std={x.std()}")
-    debug_print(f"[{dist.get_rank()}] training_step: Input x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}")
-    debug_print(f"[{dist.get_rank()}] training_step: Batch {batch_idx} - Target y shape: {y.shape}, dtype: {y.dtype}")
-    debug_print(f"[{dist.get_rank()}] training_step: Target y stats: min={y.min()}, max={y.max()}, mean={y.mean()}, std={y.std()}")
-    debug_print(f"[{dist.get_rank()}] training_step: Target y NaN/Inf: NaN={torch.isnan(y).any()}, Inf={torch.isinf(y).any()}")
+    print(f"[{dist.get_rank()}] training_step: Batch {batch_idx} - Input x shape: {x.shape}, dtype: {x.dtype}", flush=True)
+    print(f"[{dist.get_rank()}] training_step: Input x stats: min={x.min()}, max={x.max()}, mean={x.mean()}, std={x.std()}", flush=True)
+    print(f"[{dist.get_rank()}] training_step: Input x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}", flush=True)
+    print(f"[{dist.get_rank()}] training_step: Batch {batch_idx} - Target y shape: {y.shape}, dtype: {y.dtype}", flush=True)
+    print(f"[{dist.get_rank()}] training_step: Target y stats: min={y.min()}, max={y.max()}, mean={y.mean()}, std={y.std()}", flush=True)
+    print(f"[{dist.get_rank()}] training_step: Target y NaN/Inf: NaN={torch.isnan(y).any()}, Inf={torch.isinf(y).any()}", flush=True)
 
     try:
         yhat = net.forward(x, in_variables, out_variables)
-        debug_print(f"[{dist.get_rank()}] training_step: After net.forward - yhat shape: {yhat.shape}, dtype: {yhat.dtype}")
-        debug_print(f"[{dist.get_rank()}] training_step: yhat stats: min={yhat.min()}, max={yhat.max()}, mean={yhat.mean()}, std={yhat.std()}")
-        debug_print(f"[{dist.get_rank()}] training_step: yhat NaN/Inf: NaN={torch.isnan(yhat).any()}, Inf={torch.isinf(yhat).any()}")
+        print(f"[{dist.get_rank()}] training_step: After net.forward - yhat shape: {yhat.shape}, dtype: {yhat.dtype}", flush=True)
+        print(f"[{dist.get_rank()}] training_step: yhat stats: min={yhat.min()}, max={yhat.max()}, mean={yhat.mean()}, std={yhat.std()}", flush=True)
+        print(f"[{dist.get_rank()}] training_step: yhat NaN/Inf: NaN={torch.isnan(yhat).any()}, Inf={torch.isinf(yhat).any()}", flush=True)
     except Exception as e:
-        debug_print(f"[{dist.get_rank()}] CRITICAL ERROR in net.forward: {e}")
+        print(f"[{dist.get_rank()}] CRITICAL ERROR in net.forward: {e}", flush=True)
         raise e
 
     try:
         yhat = clip_replace_constant(y, yhat, out_variables)
-        debug_print(f"[{dist.get_rank()}] training_step: After clip_replace_constant - yhat stats: min={yhat.min()}, max={yhat.max()}, mean={yhat.mean()}, std={yhat.std()}")
-        debug_print(f"[{dist.get_rank()}] training_step: yhat (after clip) NaN/Inf: NaN={torch.isnan(yhat).any()}, Inf={torch.isinf(yhat).any()}")
+        print(f"[{dist.get_rank()}] training_step: After clip_replace_constant - yhat stats: min={yhat.min()}, max={yhat.max()}, mean={yhat.mean()}, std={yhat.std()}", flush=True)
+        print(f"[{dist.get_rank()}] training_step: yhat (after clip) NaN/Inf: NaN={torch.isnan(yhat).any()}, Inf={torch.isinf(yhat).any()}", flush=True)
     except Exception as e:
-        debug_print(f"[{dist.get_rank()}] CRITICAL ERROR in clip_replace_constant: {e}")
+        print(f"[{dist.get_rank()}] CRITICAL ERROR in clip_replace_constant: {e}", flush=True)
         raise e
 
     try:
@@ -334,11 +334,11 @@ def training_step(
             losses = train_loss_metric(
                 yhat, y, var_names=out_variables, var_weights=var_weights
             )
-        debug_print(f"[{dist.get_rank()}] training_step: After train_loss_metric - losses shape: {losses.shape}, dtype: {losses.dtype}")
-        debug_print(f"[{dist.get_rank()}] training_step: losses stats: min={losses.min()}, max={losses.max()}, mean={losses.mean()}, std={losses.std()}")
-        debug_print(f"[{dist.get_rank()}] training_step: losses NaN/Inf: NaN={torch.isnan(losses).any()}, Inf={torch.isinf(losses).any()}")
+        print(f"[{dist.get_rank()}] training_step: After train_loss_metric - losses shape: {losses.shape}, dtype: {losses.dtype}", flush=True)
+        print(f"[{dist.get_rank()}] training_step: losses stats: min={losses.min()}, max={losses.max()}, mean={losses.mean()}, std={losses.std()}", flush=True)
+        print(f"[{dist.get_rank()}] training_step: losses NaN/Inf: NaN={torch.isnan(losses).any()}, Inf={torch.isinf(losses).any()}", flush=True)
     except Exception as e:
-        debug_print(f"[{dist.get_rank()}] CRITICAL ERROR in train_loss_metric: {e}")
+        print(f"[{dist.get_rank()}] CRITICAL ERROR in train_loss_metric: {e}", flush=True)
         raise e
 
     loss_name = getattr(train_loss_metric, "name", "loss")
@@ -347,8 +347,8 @@ def training_step(
     else:  # per channel + aggregate
         loss = losses[-1]
 
-    debug_print(f"[{dist.get_rank()}] training_step: Final loss value: {loss.item()}")
-    debug_print(f"[{dist.get_rank()}] training_step: Final loss NaN/Inf: NaN={torch.isnan(loss).any()}, Inf={torch.isinf(loss).any()}")
+    print(f"[{dist.get_rank()}] training_step: Final loss value: {loss.item()}", flush=True)
+    print(f"[{dist.get_rank()}] training_step: Final loss NaN/Inf: NaN={torch.isnan(loss).any()}, Inf={torch.isinf(loss).any()}", flush=True)
 
     return loss
 
