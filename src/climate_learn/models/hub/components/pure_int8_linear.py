@@ -158,7 +158,8 @@ class PureInt8Matmul(Function):
         ctx.has_bias = bias_fp32 is not None
 
         debug_print("PureInt8Matmul.forward: end")
-        return output_dequant # Return FP32 for now, as subsequent layers expect it.
+        # CK Attention requires bfloat16 or float16 input. Cast output to bfloat16.
+        return output_dequant.to(torch.bfloat16)
 
     @staticmethod
     def backward(ctx, grad_output_fp32):
