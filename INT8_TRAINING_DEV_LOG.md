@@ -32,7 +32,7 @@ We are adopting an aggressive **"Pure INT8 Backward"** strategy. Unlike conventi
 ### Phase 2: Integration & Stability
 - [x] Replace standard `nn.Linear` in `Mlp` and `Attention` blocks with `PureInt8Linear`.
 - [x] Initial stability test run (Failed silently, suspecting segmentation fault or NaN explosion).
-- [ ] **Debugging:** Instrument `PureInt8Linear` with logs and NaN checks to pinpoint failure location.
+- [x] **Debugging:** Instrument `PureInt8Linear` with logs and NaN checks to pinpoint failure location.
 - [ ] Verify numerical stability (check for loss crashes or stagnation).
 
 ### Phase 3: Optimization & Benchmarking
@@ -40,6 +40,11 @@ We are adopting an aggressive **"Pure INT8 Backward"** strategy. Unlike conventi
 - [ ] Iterate on scaling strategies if convergence issues arise.
 
 ## Log Entries
+
+### 2025-12-09: Debugging & Critical Fixes
+-   **Critical Fix:** Resolved `NameError` in `PureInt8Matmul.backward` where `bias_fp32` was not accessible. Added `ctx.has_bias` to track bias existence.
+-   **Critical Fix:** Fixed precision loss bug where INT32 accumulators were cast to INT8 *before* dequantization. Changed to cast to FP32 first to preserve accumulator values during scaling.
+-   **Instrumentation:** Uncommented `debug_print` logs and NaN checks to capture detailed state during the next Frontier run.
 
 ### 2025-12-09: Initiative Kick-off
 -   Rejected standard QAT and Hybrid (SwitchBack) approaches.

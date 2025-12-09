@@ -80,7 +80,7 @@ class PureInt8Matmul(Function):
     """
     @staticmethod
     def forward(ctx, input_fp32, weight_fp32, bias_fp32):
-        # debug_print(f"PureInt8Matmul.forward: start. Input shape: {input_fp32.shape}")
+        debug_print(f"PureInt8Matmul.forward: start. Input shape: {input_fp32.shape}")
         
         if torch.isnan(input_fp32).any():
              debug_print("CRITICAL: NaN detected in input_fp32")
@@ -94,7 +94,7 @@ class PureInt8Matmul(Function):
         input_shift, input_scale_factor = get_scale_shift(input_abs_max)
         weight_shift, weight_scale_factor = get_scale_shift(weight_abs_max)
         
-        # debug_print(f"Shifts - Input: {input_shift}, Weight: {weight_shift}")
+        debug_print(f"Shifts - Input: {input_shift}, Weight: {weight_shift}")
 
         # 2. Quantize input and weight to INT8 using bit-shift logic
         input_int8 = quantize_to_int8_shifted(input_fp32, input_shift, stochastic=False)
@@ -131,13 +131,14 @@ class PureInt8Matmul(Function):
         ctx.weight_shift = weight_shift
         ctx.output_shift = output_shift # Shift used for output of forward
         ctx.input_fp32_shape = input_fp32.shape # Save original float shape
+        ctx.has_bias = bias_fp32 is not None
 
-        # debug_print("PureInt8Matmul.forward: end")
+        debug_print("PureInt8Matmul.forward: end")
         return output_dequant # Return FP32 for now, as subsequent layers expect it.
 
     @staticmethod
     def backward(ctx, grad_output_fp32):
-        # debug_print(f"PureInt8Matmul.backward: start. Grad shape: {grad_output_fp32.shape}")
+        debug_print(f"PureInt8Matmul.backward: start. Grad shape: {grad_output_fp32.shape}")
         
         if torch.isnan(grad_output_fp32).any():
              debug_print("CRITICAL: NaN detected in grad_output_fp32")
@@ -165,7 +166,8 @@ class PureInt8Matmul(Function):
                 # Determine effective shift for grad_weight_int32_accum
                 # This is complex, but conceptually, we use the original shifts
                 grad_weight_dequant_shift = input_shift + grad_output_shift
-                grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.int8), grad_weight_dequant_shift) # Placeholder conversion to int8 then dequant
+                # Fix: Don't cast to int8 before dequantizing. Convert to float first.
+                grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.float32), grad_weight_dequant_shift) 
 
             # dX = grad_output @ weight.T
             if ctx.needs_input_grad[0]:
@@ -175,18 +177,19 @@ class PureInt8Matmul(Function):
                 
                 # Determine effective shift for grad_input_int32_accum
                 grad_input_dequant_shift = grad_output_shift + weight_shift
-                grad_input = dequantize_from_int8_shifted(grad_input_int32_accum.to(torch.int8), grad_input_dequant_shift) # Placeholder conversion to int8 then dequant
+                # Fix: Don't cast to int8 before dequantizing. Convert to float first.
+                grad_input = dequantize_from_int8_shifted(grad_input_int32_accum.to(torch.float32), grad_input_dequant_shift) 
                 grad_input = grad_input.reshape(ctx.input_fp32_shape)
 
 
             # dBias = grad_output.sum(0)
-            if ctx.needs_input_grad[2] and bias_fp32 is not None:
+            if ctx.needs_input_grad[2] and ctx.has_bias:
                 grad_bias = grad_output_fp32.sum(0) # Bias gradient remains FP32 for now
         except Exception as e:
             debug_print(f"CRITICAL ERROR in Backward: {e}")
             raise e
 
-        # debug_print("PureInt8Matmul.backward: end")
+        debug_print("PureInt8Matmul.backward: end")
         return grad_input, grad_weight, grad_bias
 
 
