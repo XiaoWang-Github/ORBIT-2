@@ -201,9 +201,9 @@ class PureInt8Matmul(Function):
                 debug_print(f"Before calculating grad_input. grad_output_int8 shape: {grad_output_int8.shape}, weight_int8 shape: {weight_int8.shape}")
                 # Reshape for matmul
                 # grad_output_int8_flattened already exists
-                weight_int8_t_flattened = weight_int8.to(torch.float32).t() # No need to flatten weight_int8_t as it's already 2D
+                weight_int8_for_matmul = weight_int8.to(torch.float32) # Removed .t() for correct dimensions
                 
-                grad_input_fp32_accum_flattened = torch.matmul(grad_output_int8_flattened.to(torch.float32), weight_int8_t_flattened)
+                grad_input_fp32_accum_flattened = torch.matmul(grad_output_int8_flattened.to(torch.float32), weight_int8_for_matmul)
                 debug_print(f"After matmul for grad_input: grad_input_fp32_accum_flattened shape: {grad_input_fp32_accum_flattened.shape}")
                 
                 # Reshape back to original input shape (batch dims + in_features)
