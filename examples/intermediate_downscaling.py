@@ -39,6 +39,19 @@ from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
 from climate_learn.dist.profile import *
 from utils import seed_everything, init_par_groups
 
+def debug_print(*args, **kwargs):
+    # Check rank using dist or env vars (fallback)
+    rank = 0
+    if dist.is_initialized():
+        rank = dist.get_rank()
+    elif "RANK" in os.environ:
+        rank = int(os.environ["RANK"])
+    elif "SLURM_PROCID" in os.environ:
+        rank = int(os.environ["SLURM_PROCID"])
+    
+    # Print only for rank 0, or if all_ranks is True
+    if rank == 0 or kwargs.pop("all_ranks", False):
+        print(f"[DEBUG_RANK_{rank}]", *args, **kwargs, flush=True)
 
 def validate_data_type(data_type):
     """Validate that data_type is either bfloat16 or float32.
@@ -294,6 +307,16 @@ def training_step(
     batch, batch_idx, net, device: int, var_weights, train_loss_metric
 ) -> torch.Tensor:
     print(f"[{dist.get_rank()}] Entered training_step", flush=True)
+
+    # Check model parameters for NaNs/Infs at the start of training step
+    for name, param in net.named_parameters():
+        if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
+            debug_print(f"[{dist.get_rank()}] CRITICAL: NaN/Inf detected in gradient of parameter {name}", all_ranks=True)
+            # You might want to break or raise an error here if this is unexpected
+        if torch.isnan(param).any() or torch.isinf(param).any():
+            debug_print(f"[{dist.get_rank()}] CRITICAL: NaN/Inf detected in parameter {name}", all_ranks=True)
+            # You might want to break or raise an error here if this is unexpected
+
     x, y, in_variables, out_variables = batch
     x = x.to(device)
     y = y.to(device)
