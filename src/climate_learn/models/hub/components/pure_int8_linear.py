@@ -101,8 +101,19 @@ class PureInt8Matmul(Function):
         weight_int8 = quantize_to_int8_shifted(weight_fp32, weight_shift, stochastic=False)
 
         debug_print(f"Before matmul: input_int8 shape: {input_int8.shape}, weight_int8 shape: {weight_int8.shape}")
+        
         # 3. Perform INT8 matrix multiplication (accumulates in INT32 on MI250x)
-        output_int32_accum = torch.matmul(input_int8.to(torch.int32), weight_int8.to(torch.int32).t())
+        # Reshape input to 2D to ensure compatibility with ROCm/MI250x INT8/INT32 matmul
+        input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1])
+        debug_print(f"Flattened input for matmul: {input_int8_flattened.shape}")
+        
+        output_int32_accum_flattened = torch.matmul(input_int8_flattened.to(torch.int32), weight_int8.to(torch.int32).t())
+        
+        # Reshape back to original dimensions
+        output_shape = list(input_fp32.shape)
+        output_shape[-1] = weight_int8.shape[0] # out_features
+        output_int32_accum = output_int32_accum_flattened.reshape(output_shape)
+        
         debug_print(f"After matmul: output_int32_accum shape: {output_int32_accum.shape}")
         
         # Calculate the theoretical dequantization scale for the accumulated INT32 output
