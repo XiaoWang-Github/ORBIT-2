@@ -102,21 +102,25 @@ class PureInt8Matmul(Function):
 
         debug_print(f"Before matmul: input_int8 shape: {input_int8.shape}, weight_int8 shape: {weight_int8.shape}")
         
-        # 3. Perform INT8 matrix multiplication (accumulates in INT32 on MI250x)
-        # Reshape input to 2D to ensure compatibility with ROCm/MI250x INT8/INT32 matmul
+        # 3. Perform INT8 matrix multiplication using explicit torch._int_mm for hardware acceleration
+        # Reshape input to 2D
         input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1]).contiguous()
         debug_print(f"Flattened input for matmul: {input_int8_flattened.shape}")
         
-        # WORKAROUND: Perform matmul in FP32 to avoid ROCm/MI250x INT32 matmul crash.
-        # FP32 (23-bit mantissa) can exactly represent the integer product (max ~4M < 8M), so "Pure INT8" logic is preserved.
-        output_fp32_accum_flattened = torch.matmul(input_int8_flattened.to(torch.float32), weight_int8.to(torch.float32).t())
+        # We need (Batch, Out) = (Batch, In) @ (In, Out). 
+        # weight_int8 is (Out, In). So we use weight_int8.t() which is (In, Out).
+        # _int_mm requires both inputs to be contiguous.
+        weight_int8_t_contiguous = weight_int8.t().contiguous()
+        
+        # Output is INT32
+        output_int32_accum_flattened = torch._int_mm(input_int8_flattened, weight_int8_t_contiguous)
         
         # Reshape back to original dimensions
         output_shape = list(input_fp32.shape)
         output_shape[-1] = weight_int8.shape[0] # out_features
-        output_fp32_accum = output_fp32_accum_flattened.reshape(output_shape)
+        output_int32_accum = output_int32_accum_flattened.reshape(output_shape)
         
-        debug_print(f"After matmul: output_fp32_accum shape: {output_fp32_accum.shape}")
+        debug_print(f"After matmul: output_int32_accum shape: {output_int32_accum.shape}")
         
         # Calculate the theoretical dequantization scale for the accumulated INT32 output
         # If output was FP32, it would be input_fp32 @ weight_fp32
@@ -126,11 +130,11 @@ class PureInt8Matmul(Function):
         
         # Determine the output shift based on the product of input and weight scales.
         # We want to scale output_int32_accum to INT8.
-        output_abs_max = output_fp32_accum.abs().max()
-        output_shift, _ = get_scale_shift(output_abs_max) # calculate new shift for output
+        output_abs_max_int32 = output_int32_accum.abs().max()
+        output_shift, _ = get_scale_shift(output_abs_max_int32.to(torch.float32)) # calculate new shift for output
         
-        debug_print(f"Before quantizing output: output_abs_max: {output_abs_max}, output_shift: {output_shift}")
-        output_int8 = quantize_to_int8_shifted(output_fp32_accum, output_shift) # Quantize output to INT8
+        debug_print(f"Before quantizing output: output_abs_max_int32: {output_abs_max_int32}, output_shift: {output_shift}")
+        output_int8 = quantize_to_int8_shifted(output_int32_accum.to(torch.float32), output_shift) # Quantize output to INT8
         debug_print(f"After quantizing output: output_int8 shape: {output_int8.shape}")
         
         debug_print("Before dequantizing output.")
@@ -180,39 +184,50 @@ class PureInt8Matmul(Function):
             # dW = input.T @ grad_output
             if ctx.needs_input_grad[1]:
                 debug_print(f"Before calculating grad_weight. input_int8 shape: {input_int8.shape}, grad_output_int8 shape: {grad_output_int8.shape}")
+                
                 # Reshape for matmul
                 input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1]).contiguous()
-                grad_output_int8_flattened = grad_output_int8.reshape(-1, grad_output_int8.shape[-1]).contiguous() # Assuming grad_output_int8 could be 3D
+                grad_output_int8_flattened = grad_output_int8.reshape(-1, grad_output_int8.shape[-1]).contiguous()
                 
-                grad_weight_fp32_accum_flattened = torch.matmul(input_int8_flattened.to(torch.float32).transpose(-2, -1), grad_output_int8_flattened.to(torch.float32))
-                debug_print(f"After matmul for grad_weight: grad_weight_fp32_accum_flattened shape: {grad_weight_fp32_accum_flattened.shape}")
+                # We need (Out, In) = (Out, Batch) @ (Batch, In)
+                # grad_output is (Batch, Out). input is (Batch, In).
+                # So we compute grad_output.T @ input.
+                grad_output_t_contiguous = grad_output_int8_flattened.t().contiguous()
                 
-                # Reshape back if necessary (original weight is 2D)
-                # The result of input_T @ grad_output should be the shape of weight (out_features, in_features)
-                grad_weight_fp32_accum = grad_weight_fp32_accum_flattened.reshape(weight_int8.shape[0], weight_int8.shape[1])
-
+                grad_weight_int32_accum = torch._int_mm(grad_output_t_contiguous, input_int8_flattened)
+                debug_print(f"After matmul for grad_weight: grad_weight_int32_accum shape: {grad_weight_int32_accum.shape}")
+                
+                # Result is (Out, In) which matches weight shape. No reshape needed if correct.
+                
                 grad_weight_dequant_shift = input_shift + grad_output_shift
                 debug_print(f"Before dequantizing grad_weight. grad_weight_dequant_shift: {grad_weight_dequant_shift}")
-                grad_weight = dequantize_from_int8_shifted(grad_weight_fp32_accum, grad_weight_dequant_shift) 
+                # Use float cast just for dequantization scaling
+                grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.float32), grad_weight_dequant_shift) 
                 debug_print(f"After dequantizing grad_weight. grad_weight shape: {grad_weight.shape}")
 
             # dX = grad_output @ weight.T
             if ctx.needs_input_grad[0]:
                 debug_print(f"Before calculating grad_input. grad_output_int8 shape: {grad_output_int8.shape}, weight_int8 shape: {weight_int8.shape}")
+                
                 # Reshape for matmul
                 # grad_output_int8_flattened already exists
-                weight_int8_for_matmul = weight_int8.to(torch.float32) # Removed .t() for correct dimensions
+                # weight_int8 is (Out, In).
+                # We need (Batch, In) = (Batch, Out) @ (Out, In).
+                # _int_mm(grad_output, weight)
                 
-                grad_input_fp32_accum_flattened = torch.matmul(grad_output_int8_flattened.to(torch.float32), weight_int8_for_matmul)
-                debug_print(f"After matmul for grad_input: grad_input_fp32_accum_flattened shape: {grad_input_fp32_accum_flattened.shape}")
+                # Ensure weight is contiguous (it should be, but safety first)
+                weight_int8_contiguous = weight_int8.contiguous()
+                
+                grad_input_int32_accum_flattened = torch._int_mm(grad_output_int8_flattened, weight_int8_contiguous)
+                debug_print(f"After matmul for grad_input: grad_input_int32_accum_flattened shape: {grad_input_int32_accum_flattened.shape}")
                 
                 # Reshape back to original input shape (batch dims + in_features)
-                grad_input_fp32_accum = grad_input_fp32_accum_flattened.reshape(ctx.input_fp32_shape[0], ctx.input_fp32_shape[1], ctx.input_fp32_shape[2])
-
+                grad_input_int32_accum = grad_input_int32_accum_flattened.reshape(ctx.input_fp32_shape[0], ctx.input_fp32_shape[1], ctx.input_fp32_shape[2])
 
                 grad_input_dequant_shift = grad_output_shift + weight_shift
                 debug_print(f"Before dequantizing grad_input. grad_input_dequant_shift: {grad_input_dequant_shift}")
-                grad_input = dequantize_from_int8_shifted(grad_input_fp32_accum, grad_input_dequant_shift) 
+                grad_input = dequantize_from_int8_shifted(grad_input_int32_accum.to(torch.float32), grad_input_dequant_shift) 
+                
                 grad_input = grad_input.reshape(ctx.input_fp32_shape)
                 debug_print(f"After dequantizing grad_input. grad_input shape: {grad_input.shape}")
 
