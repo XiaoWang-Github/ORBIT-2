@@ -45,8 +45,10 @@ We are adopting an aggressive **"Pure INT8 Backward"** strategy. Unlike conventi
 ### 2025-12-09: Triton Kernel Integration & Forward Pass Validation
 -   Successfully implemented and integrated custom Triton kernel (`triton_int8_matmul`) for INT8 matrix multiplication.
 -   Triton kernel compiles and executes on Frontier MI250x, fully replacing `torch.matmul` and `torch._int_mm` in `PureInt8Matmul`.
--   Forward pass of `PureInt8Matmul` (using Triton) is fully functional and completes successfully.
--   Backward pass of `PureInt8Matmul` also confirmed functional by Triton integration, though overall training loop still terminates early.
+-   **Fixed Critical: `PureInt8Matmul` output data type mismatch with CK Attention.** Changed `PureInt8Matmul.forward` to return `bfloat16` to ensure compatibility with `memory_efficient_attention` (CK backend) which only supports half-precision.
+-   Forward pass of `PureInt8Matmul` (using Triton) is now fully functional and completes successfully.
+-   Backward pass of `PureInt8Matmul` also confirmed functional by Triton integration.
+-   **New Critical Issue:** `PureInt8Matmul`'s `forward` method is now detecting `NaN` in its `input_fp32` during subsequent calls within the model's overall forward pass. This indicates numerical instability or `NaN` generation from another part of the model's computation, leading to `cannot convert float NaN to integer` errors.
 
 ### 2025-12-09: Debugging & Critical Fixes
 -   **Critical Fix:** Resolved `NameError` in `PureInt8Matmul.backward` where `bias_fp32` was not accessible. Added `ctx.has_bias` to track bias existence.
