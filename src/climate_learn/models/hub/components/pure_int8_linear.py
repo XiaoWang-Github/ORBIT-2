@@ -1,0 +1,189 @@
+import torch
+import torch.nn as nn
+from torch.autograd import Function
+import math
+
+# --- Quantization and Dequantization Helper Functions ---
+
+def get_scale_shift(tensor_abs_max):
+    """
+    Calculates a bit-shift amount to scale tensor values into the INT8 range.
+    Returns (shift_amount, actual_scale_factor).
+    """
+    if tensor_abs_max == 0:
+        return 0, 1.0 # No shift needed, effectively scale of 1
+    
+    # We want to scale such that max_val * scale_factor is close to 127.
+    # scale_factor = 2^shift_amount
+    # So, shift_amount = log2(127 / tensor_abs_max)
+    shift_amount_float = math.log2(127.0 / tensor_abs_max.item())
+    
+    # Round to nearest integer shift amount for bit-shift approximation
+    shift_amount = round(shift_amount_float)
+    
+    # Ensure shift_amount is reasonable (e.g., between -15 and 15) to prevent overflow/underflow
+    shift_amount = max(-15, min(15, shift_amount))
+    
+    actual_scale_factor = 2.0 ** shift_amount
+    return shift_amount, actual_scale_factor
+
+def quantize_to_int8_shifted(tensor_fp32, shift_amount, stochastic=False):
+    """
+    Quantizes a float32 tensor to int8 using a bit-shift-like scaling.
+    `shift_amount` is such that scaled_val = tensor_fp32 * (2^shift_amount)
+    """
+    # Scale the tensor as if applying a bit-shift
+    scaled_tensor_fp32 = tensor_fp32 * (2.0 ** shift_amount)
+
+    # Apply stochastic rounding (simplified placeholder)
+    if stochastic:
+        # Add uniform noise [-0.5, 0.5] before rounding
+        scaled_tensor_fp32 = scaled_tensor_fp32 + (torch.rand_like(scaled_tensor_fp32) - 0.5)
+
+    # Round to nearest integer
+    quantized_tensor_int = torch.round(scaled_tensor_fp32)
+
+    # Clip to INT8 range
+    quantized_tensor_int = torch.clamp(quantized_tensor_int, -128, 127)
+    return quantized_tensor_int.to(torch.int8)
+
+def dequantize_from_int8_shifted(tensor_int8, shift_amount):
+    """
+    Dequantizes an int8 tensor back to float32 using the inverse bit-shift scaling.
+    """
+    return tensor_int8.to(torch.float32) / (2.0 ** shift_amount)
+
+
+# --- Custom Autograd Function for Pure INT8 Matmul ---
+
+class PureInt8Matmul(Function):
+    """
+    Custom Autograd Function for performing matrix multiplication with INT8
+    inputs and producing INT8 outputs (after scaling).
+    Backward pass also uses INT8 for gradient computations.
+    """
+    @staticmethod
+    def forward(ctx, input_fp32, weight_fp32, bias_fp32):
+        # 1. Determine shift amounts for input and weight
+        input_abs_max = input_fp32.abs().max()
+        weight_abs_max = weight_fp32.abs().max()
+
+        input_shift, input_scale_factor = get_scale_shift(input_abs_max)
+        weight_shift, weight_scale_factor = get_scale_shift(weight_abs_max)
+
+        # 2. Quantize input and weight to INT8 using bit-shift logic
+        input_int8 = quantize_to_int8_shifted(input_fp32, input_shift, stochastic=False)
+        weight_int8 = quantize_to_int8_shifted(weight_fp32, weight_shift, stochastic=False)
+
+        # 3. Perform INT8 matrix multiplication (accumulates in INT32 on MI250x)
+        # Note: torch.matmul for INT8 x INT8 typically produces INT32.
+        # We need to consider how to handle the result for pure INT8 forward.
+        # For this prototype, we'll convert to INT32, perform matmul, then scale/quantize back to INT8.
+        output_int32_accum = torch.matmul(input_int8.to(torch.int32), weight_int8.to(torch.int32).t())
+        
+        # Calculate the theoretical dequantization scale for the accumulated INT32 output
+        # If output was FP32, it would be input_fp32 @ weight_fp32
+        # = (input_int8 / 2^input_shift) @ (weight_int8 / 2^weight_shift).T
+        # So, output_fp32 = (input_int8 @ weight_int8.T) / (2^(input_shift + weight_shift))
+        # This implies the effective scale for output_int32_accum is 1 / (2^(input_shift + weight_shift))
+        
+        # Determine the output shift based on the product of input and weight scales.
+        # We want to scale output_int32_accum to INT8.
+        output_abs_max_int32 = output_int32_accum.abs().max()
+        output_shift, _ = get_scale_shift(output_abs_max_int32.to(torch.float32)) # calculate new shift for output
+        
+        output_int8 = quantize_to_int8_shifted(output_int32_accum.to(torch.float32), output_shift) # Quantize output to INT8
+        
+        output_dequant = dequantize_from_int8_shifted(output_int8, output_shift)
+
+        # 4. Apply bias (bias is typically FP32, added after dequantization for now)
+        if bias_fp32 is not None:
+            output_dequant += bias_fp32 
+
+        # Store quantized inputs, weights, and shifts for backward
+        ctx.save_for_backward(input_int8, weight_int8) # Store int8 tensors
+        ctx.input_shift = input_shift
+        ctx.weight_shift = weight_shift
+        ctx.output_shift = output_shift # Shift used for output of forward
+        ctx.input_fp32_shape = input_fp32.shape # Save original float shape
+
+        return output_dequant # Return FP32 for now, as subsequent layers expect it.
+
+    @staticmethod
+    def backward(ctx, grad_output_fp32):
+        input_int8, weight_int8 = ctx.saved_tensors
+        input_shift = ctx.input_shift
+        weight_shift = ctx.weight_shift
+        # output_shift = ctx.output_shift # This is the shift used for the *forward output*
+
+        grad_input = grad_weight = grad_bias = None
+
+        # 1. Quantize grad_output to INT8 using a new dynamic shift (with stochastic rounding)
+        grad_output_abs_max = grad_output_fp32.abs().max()
+        grad_output_shift, _ = get_scale_shift(grad_output_abs_max)
+        grad_output_int8 = quantize_to_int8_shifted(grad_output_fp32, grad_output_shift, stochastic=True) # Stochastic rounding for gradients
+
+        # 2. Calculate gradients using INT8 matmul
+        # dW = input.T @ grad_output
+        if ctx.needs_input_grad[1]:
+            # Scale factor for dW should be (1 / 2^input_shift) * (1 / 2^grad_output_shift)
+            # So, the dequantization requires dividing by 2^(input_shift + grad_output_shift)
+            grad_weight_int32_accum = torch.matmul(input_int8.to(torch.int32).transpose(-2, -1), grad_output_int8.to(torch.int32))
+            
+            # Determine effective shift for grad_weight_int32_accum
+            # This is complex, but conceptually, we use the original shifts
+            grad_weight_dequant_shift = input_shift + grad_output_shift
+            grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.int8), grad_weight_dequant_shift) # Placeholder conversion to int8 then dequant
+
+        # dX = grad_output @ weight.T
+        if ctx.needs_input_grad[0]:
+            # Scale factor for dX should be (1 / 2^grad_output_shift) * (1 / 2^weight_shift)
+            # So, the dequantization requires dividing by 2^(grad_output_shift + weight_shift)
+            grad_input_int32_accum = torch.matmul(grad_output_int8.to(torch.int32), weight_int8.to(torch.int32))
+            
+            # Determine effective shift for grad_input_int32_accum
+            grad_input_dequant_shift = grad_output_shift + weight_shift
+            grad_input = dequantize_from_int8_shifted(grad_input_int32_accum.to(torch.int8), grad_input_dequant_shift) # Placeholder conversion to int8 then dequant
+            grad_input = grad_input.reshape(ctx.input_fp32_shape)
+
+
+        # dBias = grad_output.sum(0)
+        if ctx.needs_input_grad[2] and bias_fp32 is not None:
+            grad_bias = grad_output_fp32.sum(0) # Bias gradient remains FP32 for now
+
+        return grad_input, grad_weight, grad_bias
+
+
+# --- Pure INT8 Linear Layer Module ---
+
+class PureInt8Linear(nn.Module):
+    def __init__(self, in_features, out_features, bias=True):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        
+        # Weights are stored as float and quantized on-the-fly for now,
+        # but the goal is to store them as INT8 and handle updates in INT8.
+        # This is a complex part of "Pure INT8 Training".
+        self.weight = nn.Parameter(torch.empty(out_features, in_features))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(out_features))
+        else:
+            self.register_parameter('bias', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # Standard kaiming uniform initialization
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in)
+            nn.init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input):
+        # PureInt8Matmul will handle the quantization internally
+        return PureInt8Matmul.apply(input, self.weight, self.bias)
+
+    def extra_repr(self):
+        return f'in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}'

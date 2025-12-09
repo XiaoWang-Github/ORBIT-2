@@ -11,12 +11,12 @@ from timm.layers.helpers import to_2tuple
 
 import torch.distributed as dist
 
-
 from climate_learn.utils.dist_functions import F_AllReduce_B_Identity as F_AllReduce_B_Identity
 from climate_learn.utils.dist_functions import F_Identity_B_AllReduce as F_Identity_B_AllReduce
 from climate_learn.utils.dist_functions import Grad_Inspect
 
-
+# Import PureInt8Linear
+from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
 
 
 class Mlp(nn.Module):
@@ -42,7 +42,8 @@ class Mlp(nn.Module):
         hidden_features = hidden_features or in_features
         bias = to_2tuple(bias)
         drop_probs = to_2tuple(drop)
-        linear_layer = partial(nn.Conv2d, kernel_size=1) if use_conv else nn.Linear
+        # Use PureInt8Linear instead of nn.Linear
+        linear_layer = partial(nn.Conv2d, kernel_size=1) if use_conv else PureInt8Linear
 
         self.tensor_par_size = tensor_par_size
         self.tensor_par_group = tensor_par_group

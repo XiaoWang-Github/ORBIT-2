@@ -9,6 +9,10 @@ import torch.distributed as dist
 import xformers
 from xformers.components.attention.core import scaled_dot_product_attention as xformers_sdpa
 
+# Import PureInt8Linear
+from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
+
+
 class Attention(nn.Module):
     def __init__(
             self,
@@ -33,11 +37,11 @@ class Attention(nn.Module):
         self.tensor_par_size = tensor_par_size
         self.tensor_par_group = tensor_par_group
 
-        self.qkv = nn.Linear(dim, dim * 3 //self.tensor_par_size, bias=qkv_bias)
+        self.qkv = PureInt8Linear(dim, dim * 3 //self.tensor_par_size, bias=qkv_bias)
         self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim//self.tensor_par_size, dim, bias=proj_bias)
+        self.proj = PureInt8Linear(dim//self.tensor_par_size, dim, bias=proj_bias)
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -87,14 +91,6 @@ class Attention(nn.Module):
         return x
 
 
-
-
-
-
-
-
-
-
 class VariableMapping_Attention(nn.Module):
     def __init__(
             self,
@@ -119,14 +115,14 @@ class VariableMapping_Attention(nn.Module):
         self.tensor_par_size = tensor_par_size
         self.tensor_par_group = tensor_par_group
 
-        self.q = nn.Linear(dim, dim//tensor_par_size, bias=qkv_bias)
+        self.q = PureInt8Linear(dim, dim//tensor_par_size, bias=qkv_bias)
 
-        self.kv = nn.Linear(dim, dim * 2 //tensor_par_size, bias=qkv_bias)
+        self.kv = PureInt8Linear(dim, dim * 2 //tensor_par_size, bias=qkv_bias)
 
         self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim // tensor_par_size, dim, bias=proj_bias)
+        self.proj = PureInt8Linear(dim // tensor_par_size, dim, bias=proj_bias)
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, var_query: torch.Tensor, x: torch.Tensor) -> torch.Tensor:

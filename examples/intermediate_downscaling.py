@@ -1380,15 +1380,28 @@ def main(device):
 
 
 if __name__ == "__main__":
+    # Check if SLURM environment variables are set
+    if "SLURM_NTASKS" in os.environ and "SLURM_PROCID" in os.environ and "SLURM_LOCALID" in os.environ:
+        os.environ["MASTER_ADDR"] = str(os.environ["HOSTNAME"])
+        os.environ["MASTER_PORT"] = "29500"
+        # os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"] # Already set by SLURM
+        # os.environ["RANK"] = os.environ["SLURM_PROCID"] # Already set by SLURM
 
-    os.environ["MASTER_ADDR"] = str(os.environ["HOSTNAME"])
-    os.environ["MASTER_PORT"] = "29500"
-    os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
-    os.environ["RANK"] = os.environ["SLURM_PROCID"]
+        world_size = int(os.environ["SLURM_NTASKS"])
+        world_rank = int(os.environ["SLURM_PROCID"])
+        local_rank = int(os.environ["SLURM_LOCALID"])
+    else:
+        # Default to single process for local development/testing
+        print("SLURM environment variables not found. Defaulting to single-process (rank 0 of 1).", flush=True)
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = "29500" # Use a fixed port
+        os.environ["WORLD_SIZE"] = "1"
+        os.environ["RANK"] = "0"
+        os.environ["LOCAL_RANK"] = "0" # Custom env var for local_rank
 
-    world_size = int(os.environ["SLURM_NTASKS"])
-    world_rank = int(os.environ["SLURM_PROCID"])
-    local_rank = int(os.environ["SLURM_LOCALID"])
+        world_size = 1
+        world_rank = 0
+        local_rank = 0
 
     torch.cuda.set_device(local_rank)
     device = torch.cuda.current_device()
