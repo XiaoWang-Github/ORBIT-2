@@ -293,6 +293,7 @@ def clip_replace_constant(y, yhat, out_variables):
 def training_step(
     batch, batch_idx, net, device: int, var_weights, train_loss_metric
 ) -> torch.Tensor:
+    print(f"[{dist.get_rank()}] Entered training_step", flush=True)
     x, y, in_variables, out_variables = batch
     x = x.to(device)
     y = y.to(device)
@@ -669,12 +670,16 @@ def run_training_epochs(
         for batch_idx, batch in enumerate(train_dataloader):
             if world_rank == 0:
                 print(f"Processing batch {batch_idx}...", flush=True)
+                print("Before cuda synchronize", flush=True)
                 torch.cuda.synchronize(device=device)
+                print("After cuda synchronize", flush=True)
                 tic1 = time.perf_counter()
 
+            print(f"[{world_rank}] Before calling training_step", flush=True)
             loss = training_step(
                 batch, batch_idx, model, device, var_weights, train_loss
             )
+            print(f"[{world_rank}] After calling training_step", flush=True)
             epoch_loss += loss.detach()
 
             if world_rank < tensor_par_size:
