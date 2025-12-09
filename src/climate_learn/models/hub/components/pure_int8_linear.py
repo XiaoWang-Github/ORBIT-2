@@ -107,14 +107,16 @@ class PureInt8Matmul(Function):
         input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1]).contiguous()
         debug_print(f"Flattened input for matmul: {input_int8_flattened.shape}")
         
-        output_int32_accum_flattened = torch.matmul(input_int8_flattened.to(torch.int32), weight_int8.to(torch.int32).t())
+        # WORKAROUND: Perform matmul in FP32 to avoid ROCm/MI250x INT32 matmul crash.
+        # FP32 (23-bit mantissa) can exactly represent the integer product (max ~4M < 8M), so "Pure INT8" logic is preserved.
+        output_fp32_accum_flattened = torch.matmul(input_int8_flattened.to(torch.float32), weight_int8.to(torch.float32).t())
         
         # Reshape back to original dimensions
         output_shape = list(input_fp32.shape)
         output_shape[-1] = weight_int8.shape[0] # out_features
-        output_int32_accum = output_int32_accum_flattened.reshape(output_shape)
+        output_fp32_accum = output_fp32_accum_flattened.reshape(output_shape)
         
-        debug_print(f"After matmul: output_int32_accum shape: {output_int32_accum.shape}")
+        debug_print(f"After matmul: output_fp32_accum shape: {output_fp32_accum.shape}")
         
         # Calculate the theoretical dequantization scale for the accumulated INT32 output
         # If output was FP32, it would be input_fp32 @ weight_fp32
@@ -124,11 +126,11 @@ class PureInt8Matmul(Function):
         
         # Determine the output shift based on the product of input and weight scales.
         # We want to scale output_int32_accum to INT8.
-        output_abs_max_int32 = output_int32_accum.abs().max()
-        output_shift, _ = get_scale_shift(output_abs_max_int32.to(torch.float32)) # calculate new shift for output
+        output_abs_max = output_fp32_accum.abs().max()
+        output_shift, _ = get_scale_shift(output_abs_max) # calculate new shift for output
         
-        debug_print(f"Before quantizing output: output_abs_max_int32: {output_abs_max_int32}, output_shift: {output_shift}")
-        output_int8 = quantize_to_int8_shifted(output_int32_accum.to(torch.float32), output_shift) # Quantize output to INT8
+        debug_print(f"Before quantizing output: output_abs_max: {output_abs_max}, output_shift: {output_shift}")
+        output_int8 = quantize_to_int8_shifted(output_fp32_accum, output_shift) # Quantize output to INT8
         debug_print(f"After quantizing output: output_int8 shape: {output_int8.shape}")
         
         debug_print("Before dequantizing output.")
