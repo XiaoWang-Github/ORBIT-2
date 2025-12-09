@@ -48,6 +48,12 @@ def quantize_to_int8_shifted(tensor_fp32, shift_amount, stochastic=False):
     Quantizes a float32 tensor to int8 using a bit-shift-like scaling.
     `shift_amount` is such that scaled_val = tensor_fp32 * (2^shift_amount)
     """
+    # Temporarily replace NaNs with 0 to allow training to proceed past this point.
+    # The root cause of NaN generation needs to be addressed elsewhere.
+    if torch.isnan(tensor_fp32).any():
+        debug_print("CRITICAL: NaN detected in tensor_fp32 input to quantize_to_int8_shifted. Replacing with 0.", flush=True)
+        tensor_fp32 = torch.nan_to_num(tensor_fp32, nan=0.0)
+
     # Scale the tensor as if applying a bit-shift
     scaled_tensor_fp32 = tensor_fp32 * (2.0 ** shift_amount)
 
