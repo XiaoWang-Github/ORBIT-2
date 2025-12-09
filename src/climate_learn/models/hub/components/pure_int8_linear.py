@@ -100,11 +100,10 @@ class PureInt8Matmul(Function):
         input_int8 = quantize_to_int8_shifted(input_fp32, input_shift, stochastic=False)
         weight_int8 = quantize_to_int8_shifted(weight_fp32, weight_shift, stochastic=False)
 
+        debug_print(f"Before matmul: input_int8 shape: {input_int8.shape}, weight_int8 shape: {weight_int8.shape}")
         # 3. Perform INT8 matrix multiplication (accumulates in INT32 on MI250x)
-        # Note: torch.matmul for INT8 x INT8 typically produces INT32.
-        # We need to consider how to handle the result for pure INT8 forward.
-        # For this prototype, we'll convert to INT32, perform matmul, then scale/quantize back to INT8.
         output_int32_accum = torch.matmul(input_int8.to(torch.int32), weight_int8.to(torch.int32).t())
+        debug_print(f"After matmul: output_int32_accum shape: {output_int32_accum.shape}")
         
         # Calculate the theoretical dequantization scale for the accumulated INT32 output
         # If output was FP32, it would be input_fp32 @ weight_fp32
@@ -117,13 +116,19 @@ class PureInt8Matmul(Function):
         output_abs_max_int32 = output_int32_accum.abs().max()
         output_shift, _ = get_scale_shift(output_abs_max_int32.to(torch.float32)) # calculate new shift for output
         
+        debug_print(f"Before quantizing output: output_abs_max_int32: {output_abs_max_int32}, output_shift: {output_shift}")
         output_int8 = quantize_to_int8_shifted(output_int32_accum.to(torch.float32), output_shift) # Quantize output to INT8
+        debug_print(f"After quantizing output: output_int8 shape: {output_int8.shape}")
         
+        debug_print("Before dequantizing output.")
         output_dequant = dequantize_from_int8_shifted(output_int8, output_shift)
+        debug_print(f"After dequantizing output: output_dequant shape: {output_dequant.shape}")
 
         # 4. Apply bias (bias is typically FP32, added after dequantization for now)
+        debug_print("Before applying bias.")
         if bias_fp32 is not None:
             output_dequant += bias_fp32 
+        debug_print("After applying bias.")
 
         # Store quantized inputs, weights, and shifts for backward
         ctx.save_for_backward(input_int8, weight_int8) # Store int8 tensors for backward
