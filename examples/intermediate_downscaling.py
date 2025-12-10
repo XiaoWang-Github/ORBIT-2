@@ -1049,8 +1049,10 @@ def main(device):
     if gpu_type == "amd":
         if data_type == "bfloat16":
             # FusedAttn_option = FusedAttn.CK
-            print("Forcing FusedAttn.DEFAULT to avoid NaNs in CK backend", flush=True)
-            FusedAttn_option = FusedAttn.DEFAULT
+            # print("Forcing FusedAttn.DEFAULT to avoid NaNs in CK backend", flush=True)
+            # FusedAttn_option = FusedAttn.DEFAULT
+            print("Forcing FusedAttn.NONE to avoid NaNs in attention backend", flush=True)
+            FusedAttn_option = FusedAttn.NONE
         else:
             FusedAttn_option = FusedAttn.DEFAULT
     else:
