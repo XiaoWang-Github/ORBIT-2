@@ -10,6 +10,7 @@ from timm.layers.grn import GlobalResponseNorm
 from timm.layers.helpers import to_2tuple
 
 import torch.distributed as dist
+import os
 
 from climate_learn.utils.dist_functions import F_AllReduce_B_Identity as F_AllReduce_B_Identity
 from climate_learn.utils.dist_functions import F_Identity_B_AllReduce as F_Identity_B_AllReduce
@@ -18,6 +19,19 @@ from climate_learn.utils.dist_functions import Grad_Inspect
 # Import PureInt8Linear
 from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
 
+def debug_print(*args, **kwargs):
+    # Check rank using dist or env vars (fallback)
+    rank = 0
+    if dist.is_initialized():
+        rank = dist.get_rank()
+    elif "RANK" in os.environ:
+        rank = int(os.environ["RANK"])
+    elif "SLURM_PROCID" in os.environ:
+        rank = int(os.environ["SLURM_PROCID"])
+    
+    # Print only for rank 0, or if all_ranks is True
+    if rank == 0 or kwargs.pop("all_ranks", False):
+        print(f"[MLP_DEBUG_RANK_{rank}]", *args, **kwargs, flush=True)
 
 class Mlp(nn.Module):
     """ MLP as used in Vision Transformer, MLP-Mixer and related networks
@@ -56,20 +70,43 @@ class Mlp(nn.Module):
         self.drop2 = nn.Dropout(drop_probs[1])
 
     def forward(self, x):
+        debug_print(f"Mlp.forward: Input x shape: {x.shape}, dtype: {x.dtype}")
+        debug_print(f"Mlp.forward: Input x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}")
 
         if self.tensor_par_size >1:
-
             x= F_Identity_B_AllReduce(x, group=self.tensor_par_group)
+            debug_print(f"Mlp.forward: After F_Identity_B_AllReduce x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}")
 
-        x = self.fc1(x)
-        x = self.act(x)
+        try:
+            x = self.fc1(x)
+            debug_print(f"Mlp.forward: After fc1 (PureInt8Linear) x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}")
+        except Exception as e:
+            debug_print(f"CRITICAL ERROR in Mlp fc1: {e}", all_ranks=True)
+            raise e
+        
+        try:
+            x = self.act(x)
+            debug_print(f"Mlp.forward: After act x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}")
+        except Exception as e:
+            debug_print(f"CRITICAL ERROR in Mlp activation: {e}", all_ranks=True)
+            raise e
+
         x = self.drop1(x)
         x = self.norm(x)
-        x = self.fc2(x)
+        debug_print(f"Mlp.forward: After norm x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}")
+
+        try:
+            x = self.fc2(x)
+            debug_print(f"Mlp.forward: After fc2 (PureInt8Linear) x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}")
+        except Exception as e:
+            debug_print(f"CRITICAL ERROR in Mlp fc2: {e}", all_ranks=True)
+            raise e
+
         x = self.drop2(x)
 
         if self.tensor_par_size >1:
-            x = F_AllReduce_B_Identity (x, op=dist.ReduceOp.SUM, group=self.tensor_par_group)
+            dist.all_reduce(x, op=dist.ReduceOp.SUM, group=self.tensor_par_group)
+            debug_print(f"Mlp.forward: After all_reduce x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}")
 
         return x
 
