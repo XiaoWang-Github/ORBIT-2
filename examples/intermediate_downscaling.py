@@ -740,6 +740,11 @@ def run_training_epochs(
         if world_rank == 0:
             print(f"Epoch {epoch} completed. Loss: {epoch_loss.item()}", flush=True)
 
+        # Ensure all CUDA operations are done and gradients are cleared before saving checkpoint
+        # This helps avoid FSDP state issues (e.g., getting stuck in BACKWARD_PRE)
+        torch.cuda.synchronize(device=device)
+        optimizer.zero_grad()
+
         save_checkpoint(
             model,
             optimizer,
