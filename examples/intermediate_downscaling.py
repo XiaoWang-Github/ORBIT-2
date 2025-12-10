@@ -636,42 +636,34 @@ def run_training_epochs(
     local_rank,
     use_qat=False,
     qat_start_epoch=0,
+    int8_start_epoch=3, # Default to epoch 3 for switching to INT8
 ):
-    """Run training loop for specified epoch range.
+    """Run training loop for specified epoch range."""
     
-    Args:
-        model: Model to train
-        optimizer: Optimizer instance
-        scheduler: Learning rate scheduler
-        scaler: GradScaler for mixed precision (None for float32, required for bfloat16)
-        train_dataloader: DataLoader for training data
-        epoch_start (int): Starting epoch number
-        epoch_end (int): Ending epoch number (exclusive)
-        data_type (str): Data type for training ('float32' or 'bfloat16')
-        var_weights: Variable weights for loss calculation
-        train_loss: Loss function
-        device: Training device
-        world_rank (int): Global rank of current process
-        tensor_par_size (int): Tensor parallel size
-        min_scale (float): Minimum scale value for GradScaler (None for float32)
-        cp_save_path (str): Path for saving checkpoints
-        local_rank (int): Local rank for current process
-        use_qat (bool): Whether QAT is enabled
-        qat_start_epoch (int): Epoch to activate QAT
-        
-    Returns:
-        int: Final epoch number
-    """
     if world_rank == 0:
         print("Entering run_training_epochs...", flush=True)
 
+    from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
+
     for epoch in range(epoch_start, epoch_end):
-        # Activate QAT at specified epoch
+        # Hybrid Training Strategy: Switch to INT8 after warm-up
+        use_int8 = epoch >= int8_start_epoch
+        if world_rank == 0:
+            print(f"\n{'='*80}", flush=True)
+            mode_str = "INT8 (PureInt8Matmul)" if use_int8 else "BF16/FP32 (Standard Linear)"
+            print(f"EPOCH {epoch}: Using {mode_str} Mode", flush=True)
+            print(f"{'='*80}", flush=True)
+
+        # Iterate through model modules and set int8_enabled flag
+        # We need to handle FSDP wrapped modules
+        for module in model.modules():
+            if isinstance(module, PureInt8Linear):
+                module.int8_enabled = use_int8
+        
+        # Activate QAT at specified epoch (if used)
         if use_qat and epoch == qat_start_epoch:
             if world_rank == 0:
-                print(f"\n{'='*80}", flush=True)
                 print(f"ACTIVATING QAT AT EPOCH {epoch}", flush=True)
-                print(f"{'='*80}", flush=True)
             from climate_learn.utils import qat_utils
             qat_utils.enable_qat_mode(model, enable=True)
             # Reduce learning rate for fine-tuning
@@ -680,41 +672,26 @@ def run_training_epochs(
                 param_group['lr'] *= 0.1
                 if world_rank == 0:
                     print(f"Reduced learning rate: {old_lr} → {param_group['lr']}", flush=True)
-            if world_rank == 0:
-                print(f"{'='*80}\n", flush=True)
         
         model.train()
         epoch_loss = torch.tensor(0.0, dtype=torch.float32, device=device)
         
         if world_rank == 0:
             print(f"Starting epoch {epoch}", flush=True)
-            print("Getting first batch from train_dataloader...", flush=True)
 
         for batch_idx, batch in enumerate(train_dataloader):
             if world_rank == 0:
-                print(f"Processing batch {batch_idx}...", flush=True)
-                print("Before cuda synchronize", flush=True)
                 torch.cuda.synchronize(device=device)
-                print("After cuda synchronize", flush=True)
                 tic1 = time.perf_counter()
 
-            print(f"[{world_rank}] Before calling training_step", flush=True)
-            loss = training_step(
-                batch, batch_idx, model, device, var_weights, train_loss
-            )
-            print(f"[{world_rank}] After calling training_step", flush=True)
-            epoch_loss += loss.detach()
-
-            if world_rank < tensor_par_size:
-                print(
-                    f"epoch: {epoch}, batch_idx: {batch_idx}, "
-                    f"world_rank: {world_rank}, loss: {loss}",
-                    flush=True,
-                )
-
-            optimizer.zero_grad()
-
             try:
+                loss = training_step(
+                    batch, batch_idx, model, device, var_weights, train_loss
+                )
+                epoch_loss += loss.detach()
+
+                optimizer.zero_grad()
+
                 if data_type == "float32":
                     loss.backward()
                     # Gradient Clipping
@@ -731,7 +708,7 @@ def run_training_epochs(
                         scaler._scale = torch.tensor(min_scale).to(scaler._scale)
             except RuntimeError as e:
                 if "NaN" in str(e) or "nan" in str(e):
-                    print(f"[{world_rank}] WARNING: NaN detected during backward/optimization. Skipping batch {batch_idx}. Error: {e}", flush=True)
+                    print(f"[{world_rank}] WARNING: NaN detected during training/backward. Skipping batch {batch_idx}. Error: {e}", flush=True)
                     optimizer.zero_grad() # Clear gradients
                     continue # Skip to next batch
                 else:
@@ -993,6 +970,11 @@ def main(device):
     # QAT configuration
     use_qat = conf["trainer"].get("use_qat", False)
     qat_start_epoch = conf["trainer"].get("qat_start_epoch", 0)
+    
+    # Hybrid INT8 Training Configuration
+    int8_start_epoch = conf["trainer"].get("int8_start_epoch", 3)
+    if world_rank == 0:
+        print(f"INT8 Start Epoch: {int8_start_epoch}", flush=True)
     
     # Force float32 for QAT (FakeQuantize doesn't support bfloat16)
     if use_qat and data_type == "bfloat16":
@@ -1452,6 +1434,7 @@ def main(device):
                 local_rank=local_rank,
                 use_qat=use_qat,
                 qat_start_epoch=qat_start_epoch,
+                int8_start_epoch=int8_start_epoch,
             )
 
             if first_time_bool:
