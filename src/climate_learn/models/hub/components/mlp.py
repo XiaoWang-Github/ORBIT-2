@@ -2,6 +2,7 @@
 
 Hacked together by / Copyright 2020 Ross Wightman
 """
+import torch
 from functools import partial
 
 from torch import nn as nn
