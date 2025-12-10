@@ -13,7 +13,12 @@ from xformers.components.attention.core import scaled_dot_product_attention as x
 # Import PureInt8Linear
 from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
 
+_ATTENTION_DEBUG_ENABLED = os.environ.get("ATTENTION_DEBUG", "0") == "1"
+
 def debug_print(*args, **kwargs):
+    if not _ATTENTION_DEBUG_ENABLED:
+        return
+
     # Check rank using dist or env vars (fallback)
     rank = 0
     if dist.is_initialized():

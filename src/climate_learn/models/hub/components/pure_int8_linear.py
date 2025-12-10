@@ -14,7 +14,12 @@ def get_scale_shift(tensor_abs_max):
     Calculates a bit-shift amount to scale tensor values into the INT8 range.
     Returns (shift_amount, actual_scale_factor).
     """
-    if tensor_abs_max == 0:
+    if torch.isinf(tensor_abs_max) or torch.isnan(tensor_abs_max):
+        # If Inf or NaN, treat as zero for scaling purposes to avoid math domain error
+        # and prevent further NaNs from propagating.
+        return 0, 1.0 
+    
+    if tensor_abs_max.item() == 0: # Use .item() for scalar tensor comparison
         return 0, 1.0 # No shift needed, effectively scale of 1
     
     shift_amount_float = math.log2(127.0 / (tensor_abs_max.item() + 1e-9))
