@@ -1488,14 +1488,6 @@ if __name__ == "__main__":
 
     print("Using dist.init_process_group. world_size ", world_size, flush=True)
 
-    # Set TRITON_CACHE_DIR to scratch to avoid Disk Quota Exceeded in home
-    triton_cache_path = "/lustre/orion/lrn036/scratch/yoonh/.triton_cache"
-    os.environ["TRITON_CACHE_DIR"] = triton_cache_path
-    if not os.path.exists(triton_cache_path):
-        os.makedirs(triton_cache_path, exist_ok=True)
-    if world_rank == 0:
-        print(f"Set TRITON_CACHE_DIR to {triton_cache_path}", flush=True)
-
     main(device)
 
     dist.destroy_process_group()

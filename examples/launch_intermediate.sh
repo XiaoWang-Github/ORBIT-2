@@ -39,6 +39,7 @@ export PIP_CACHE_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache"
 export PYTHONPYCACHEPREFIX="/lustre/orion/proj-shared/lrn036/yoonh/cache"
 export TORCH_HOME="/lustre/orion/proj-shared/lrn036/yoonh/cache"
 export TORCH_EXTENSIONS_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache/torch_extensions"
+export TRITON_CACHE_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache/triton"
 
 #source activate /lustre/orion/lrn036/world-shared/xf9/torch27-rocm63
 #conda activate /lustre/orion/lrn036/world-shared/xf9/torch26
