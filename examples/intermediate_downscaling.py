@@ -714,15 +714,28 @@ def run_training_epochs(
 
             optimizer.zero_grad()
 
-            if data_type == "float32":
-                loss.backward()
-                optimizer.step()
-            else:
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-                if scaler._scale < min_scale:
-                    scaler._scale = torch.tensor(min_scale).to(scaler._scale)
+            try:
+                if data_type == "float32":
+                    loss.backward()
+                    # Gradient Clipping
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
+                else:
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer) # Unscale before clipping
+                    # Gradient Clipping
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                    if scaler._scale < min_scale:
+                        scaler._scale = torch.tensor(min_scale).to(scaler._scale)
+            except RuntimeError as e:
+                if "NaN" in str(e) or "nan" in str(e):
+                    print(f"[{world_rank}] WARNING: NaN detected during backward/optimization. Skipping batch {batch_idx}. Error: {e}", flush=True)
+                    optimizer.zero_grad() # Clear gradients
+                    continue # Skip to next batch
+                else:
+                    raise e # Re-raise other errors
 
             if world_rank == 0:
                 log_gpu_memory(
