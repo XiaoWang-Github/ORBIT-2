@@ -311,10 +311,10 @@ def training_step(
     # Check model parameters for NaNs/Infs at the start of training step
     for name, param in net.named_parameters():
         if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
-            debug_print(f"[{dist.get_rank()}] CRITICAL: NaN/Inf detected in gradient of parameter {name}", all_ranks=True)
+            print(f"[{dist.get_rank()}] CRITICAL: NaN/Inf detected in gradient of parameter {name}", flush=True)
             # You might want to break or raise an error here if this is unexpected
         if torch.isnan(param).any() or torch.isinf(param).any():
-            debug_print(f"[{dist.get_rank()}] CRITICAL: NaN/Inf detected in parameter {name}", all_ranks=True)
+            print(f"[{dist.get_rank()}] CRITICAL: NaN/Inf detected in parameter {name}", flush=True)
             # You might want to break or raise an error here if this is unexpected
 
     x, y, in_variables, out_variables = batch
@@ -1099,7 +1099,9 @@ def main(device):
 
     if gpu_type == "amd":
         if data_type == "bfloat16":
-            FusedAttn_option = FusedAttn.CK
+            # FusedAttn_option = FusedAttn.CK
+            print("Forcing FusedAttn.DEFAULT to avoid NaNs in CK backend", flush=True)
+            FusedAttn_option = FusedAttn.DEFAULT
         else:
             FusedAttn_option = FusedAttn.DEFAULT
     else:
