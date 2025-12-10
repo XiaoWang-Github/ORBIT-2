@@ -306,72 +306,29 @@ def clip_replace_constant(y, yhat, out_variables):
 def training_step(
     batch, batch_idx, net, device: int, var_weights, train_loss_metric
 ) -> torch.Tensor:
-    print(f"[{dist.get_rank()}] Entered training_step", flush=True)
-
-    # Check model parameters for NaNs/Infs at the start of training step
-    for name, param in net.named_parameters():
-        if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
-            print(f"[{dist.get_rank()}] CRITICAL: NaN/Inf detected in gradient of parameter {name}", flush=True)
-            # You might want to break or raise an error here if this is unexpected
-        if torch.isnan(param).any() or torch.isinf(param).any():
-            print(f"[{dist.get_rank()}] CRITICAL: NaN/Inf detected in parameter {name}", flush=True)
-            # You might want to break or raise an error here if this is unexpected
-
     x, y, in_variables, out_variables = batch
     x = x.to(device)
     y = y.to(device)
 
-    print(f"[{dist.get_rank()}] training_step: Batch {batch_idx} - Input x shape: {x.shape}, dtype: {x.dtype}", flush=True)
-    print(f"[{dist.get_rank()}] training_step: Input x stats: min={x.min()}, max={x.max()}, mean={x.mean()}, std={x.std()}", flush=True)
-    print(f"[{dist.get_rank()}] training_step: Input x NaN/Inf: NaN={torch.isnan(x).any()}, Inf={torch.isinf(x).any()}", flush=True)
-    print(f"[{dist.get_rank()}] training_step: Batch {batch_idx} - Target y shape: {y.shape}, dtype: {y.dtype}", flush=True)
-    print(f"[{dist.get_rank()}] training_step: Target y stats: min={y.min()}, max={y.max()}, mean={y.mean()}, std={y.std()}", flush=True)
-    print(f"[{dist.get_rank()}] training_step: Target y NaN/Inf: NaN={torch.isnan(y).any()}, Inf={torch.isinf(y).any()}", flush=True)
+    yhat = net.forward(x, in_variables, out_variables)
+    yhat = clip_replace_constant(y, yhat, out_variables)
 
-    try:
-        yhat = net.forward(x, in_variables, out_variables)
-        print(f"[{dist.get_rank()}] training_step: After net.forward - yhat shape: {yhat.shape}, dtype: {yhat.dtype}", flush=True)
-        print(f"[{dist.get_rank()}] training_step: yhat stats: min={yhat.min()}, max={yhat.max()}, mean={yhat.mean()}, std={yhat.std()}", flush=True)
-        print(f"[{dist.get_rank()}] training_step: yhat NaN/Inf: NaN={torch.isnan(yhat).any()}, Inf={torch.isinf(yhat).any()}", flush=True)
-    except Exception as e:
-        print(f"[{dist.get_rank()}] CRITICAL ERROR in net.forward: {e}", flush=True)
-        raise e
-
-    try:
-        yhat = clip_replace_constant(y, yhat, out_variables)
-        print(f"[{dist.get_rank()}] training_step: After clip_replace_constant - yhat stats: min={yhat.min()}, max={yhat.max()}, mean={yhat.mean()}, std={yhat.std()}", flush=True)
-        print(f"[{dist.get_rank()}] training_step: yhat (after clip) NaN/Inf: NaN={torch.isnan(yhat).any()}, Inf={torch.isinf(yhat).any()}", flush=True)
-    except Exception as e:
-        print(f"[{dist.get_rank()}] CRITICAL ERROR in clip_replace_constant: {e}", flush=True)
-        raise e
-
-    try:
-        if y.size(dim=2) != yhat.size(dim=2) or y.size(dim=3) != yhat.size(dim=3):
-            losses = train_loss_metric(
-                yhat,
-                y[:, :, 0 : yhat.size(dim=2), 0 : yhat.size(dim=3)],
-                var_names=out_variables,
-                var_weights=var_weights,
-            )
-        else:
-            losses = train_loss_metric(
-                yhat, y, var_names=out_variables, var_weights=var_weights
-            )
-        print(f"[{dist.get_rank()}] training_step: After train_loss_metric - losses shape: {losses.shape}, dtype: {losses.dtype}", flush=True)
-        print(f"[{dist.get_rank()}] training_step: losses stats: min={losses.min()}, max={losses.max()}, mean={losses.mean()}, std={losses.std()}", flush=True)
-        print(f"[{dist.get_rank()}] training_step: losses NaN/Inf: NaN={torch.isnan(losses).any()}, Inf={torch.isinf(losses).any()}", flush=True)
-    except Exception as e:
-        print(f"[{dist.get_rank()}] CRITICAL ERROR in train_loss_metric: {e}", flush=True)
-        raise e
-
+    if y.size(dim=2) != yhat.size(dim=2) or y.size(dim=3) != yhat.size(dim=3):
+        losses = train_loss_metric(
+            yhat,
+            y[:, :, 0 : yhat.size(dim=2), 0 : yhat.size(dim=3)],
+            var_names=out_variables,
+            var_weights=var_weights,
+        )
+    else:
+        losses = train_loss_metric(
+            yhat, y, var_names=out_variables, var_weights=var_weights
+        )
     loss_name = getattr(train_loss_metric, "name", "loss")
     if losses.dim() == 0:  # aggregate loss only
         loss = losses
     else:  # per channel + aggregate
         loss = losses[-1]
-
-    print(f"[{dist.get_rank()}] training_step: Final loss value: {loss.item()}", flush=True)
-    print(f"[{dist.get_rank()}] training_step: Final loss NaN/Inf: NaN={torch.isnan(loss).any()}, Inf={torch.isinf(loss).any()}", flush=True)
 
     return loss
 
