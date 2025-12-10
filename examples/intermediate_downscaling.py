@@ -656,9 +656,14 @@ def run_training_epochs(
 
         # Iterate through model modules and set int8_enabled flag
         # We need to handle FSDP wrapped modules
+        count = 0
         for module in model.modules():
             if isinstance(module, PureInt8Linear):
                 module.int8_enabled = use_int8
+                count += 1
+        
+        if world_rank == 0:
+             print(f"Updated int8_enabled={use_int8} for {count} PureInt8Linear modules.", flush=True)
         
         # Activate QAT at specified epoch (if used)
         if use_qat and epoch == qat_start_epoch:
