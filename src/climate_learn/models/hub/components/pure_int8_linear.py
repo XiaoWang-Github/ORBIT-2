@@ -12,21 +12,31 @@ from .triton_ops import triton_int8_matmul
 def get_scale_shift(tensor_abs_max):
     """
     Calculates a bit-shift amount to scale tensor values into the INT8 range.
-    Returns (shift_amount, actual_scale_factor).
+    Returns (shift_amount, actual_scale_factor) as Tensors to avoid CPU-GPU sync.
     """
-    if torch.isinf(tensor_abs_max) or torch.isnan(tensor_abs_max):
-        # If Inf or NaN, treat as zero for scaling purposes to avoid math domain error
-        # and prevent further NaNs from propagating.
-        return 0, 1.0 
+    # Use a small epsilon to avoid division by zero
+    # We keep operations on the device.
     
-    if tensor_abs_max.item() == 0: # Use .item() for scalar tensor comparison
-        return 0, 1.0 # No shift needed, effectively scale of 1
+    # Formula: shift = log2(127 / abs_max)
+    # Using 1e-9 for numerical stability if abs_max is extremely small (but not 0)
+    shift_amount_float = torch.log2(127.0 / (tensor_abs_max + 1e-9))
     
-    shift_amount_float = math.log2(127.0 / (tensor_abs_max.item() + 1e-9))
-    shift_amount = round(shift_amount_float)
-    shift_amount = max(-15, min(15, shift_amount))
+    # Handle potential NaNs or Infs (e.g. if tensor_abs_max was NaN/Inf)
+    # Also if tensor_abs_max is 0, the log2 term becomes huge. We want shift=0 for input=0.
+    shift_amount_float = torch.nan_to_num(shift_amount_float, nan=0.0, posinf=0.0, neginf=0.0)
     
-    actual_scale_factor = 2.0 ** shift_amount
+    # Explicitly force 0 shift if input max is 0
+    shift_amount_float = torch.where(tensor_abs_max == 0, torch.tensor(0.0, device=tensor_abs_max.device, dtype=shift_amount_float.dtype), shift_amount_float)
+
+    shift_amount = torch.round(shift_amount_float)
+    shift_amount = torch.clamp(shift_amount, -15, 15)
+    
+    actual_scale_factor = torch.pow(2.0, shift_amount)
+    
+    # Ensure types are correct (shift_amount usually int, but keep as float tensor for pow then cast if needed? 
+    # quantize function expects shift_amount to be broadcastable.
+    # Let's keep them as float tensors (or whatever type log2 returns, usually float)
+    
     return shift_amount, actual_scale_factor
 
 def quantize_to_int8_shifted(tensor_fp32, shift_amount, stochastic=False):
