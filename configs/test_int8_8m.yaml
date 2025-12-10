@@ -1,6 +1,6 @@
 #-----------   TRAINER -------------
 trainer:
-  max_epochs: 2 # Reduced for stability testing
+  max_epochs: 10 # Increased for INT8 testing
   checkpoint: 
   pretrain:
   batch_size: 32
@@ -9,6 +9,7 @@ trainer:
   data_type: bfloat16 # Keeping bfloat16 here, as our custom Linear quantizes internally
   gpu_type: "amd" #amd or nvidia
   train_loss: "bayesian_tv"
+  int8_start_epoch: 2 # Start INT8 training after 2 warmup epochs
 
 #----------  Parallelism -------------
 parallelism:
