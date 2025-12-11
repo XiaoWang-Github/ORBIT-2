@@ -39,12 +39,13 @@ def get_scale_shift(tensor_abs_max):
     
     return shift_amount, actual_scale_factor
 
-def quantize_to_int8_shifted(tensor_fp32, shift_amount, stochastic=False):
+def quantize_to_int8_shifted(tensor_fp32, scale_factor, stochastic=False):
     """
     Quantizes a float32 tensor to int8 using a bit-shift-like scaling.
+    Accepts scale_factor (2.0 ** shift_amount) directly to avoid re-computation.
     """
-    # Scale the tensor as if applying a bit-shift
-    scaled_tensor_fp32 = tensor_fp32 * (2.0 ** shift_amount)
+    # Scale the tensor
+    scaled_tensor_fp32 = tensor_fp32 * scale_factor
 
     # Apply stochastic rounding
     if stochastic:
@@ -58,11 +59,12 @@ def quantize_to_int8_shifted(tensor_fp32, shift_amount, stochastic=False):
     quantized_tensor_int = torch.clamp(quantized_tensor_int, -128, 127)
     return quantized_tensor_int.to(torch.int8)
 
-def dequantize_from_int8_shifted(tensor_int8, shift_amount):
+def dequantize_from_int8_shifted(tensor_int8, scale_factor):
     """
     Dequantizes an int8 tensor back to float32 using the inverse bit-shift scaling.
+    Accepts scale_factor (2.0 ** shift_amount) directly.
     """
-    return tensor_int8.to(torch.float32) / (2.0 ** shift_amount)
+    return tensor_int8.to(torch.float32) / scale_factor
 
 
 # --- Custom Autograd Function for Pure INT8 Matmul ---
@@ -82,9 +84,9 @@ class PureInt8Matmul(Function):
         input_shift, input_scale_factor = get_scale_shift(input_abs_max)
         weight_shift, weight_scale_factor = get_scale_shift(weight_abs_max)
         
-        # 2. Quantize input and weight to INT8 using bit-shift logic
-        input_int8 = quantize_to_int8_shifted(input_fp32, input_shift, stochastic=False)
-        weight_int8 = quantize_to_int8_shifted(weight_fp32, weight_shift, stochastic=False)
+        # 2. Quantize input and weight to INT8
+        input_int8 = quantize_to_int8_shifted(input_fp32, input_scale_factor, stochastic=False)
+        weight_int8 = quantize_to_int8_shifted(weight_fp32, weight_scale_factor, stochastic=False)
 
         # 3. Perform INT8 matrix multiplication using explicit torch._int_mm for hardware acceleration
         # Reshape input to 2D
@@ -104,11 +106,11 @@ class PureInt8Matmul(Function):
         
         # Determine the output shift based on the product of input and weight scales.
         output_abs_max_int32 = output_int32_accum.abs().max()
-        output_shift, _ = get_scale_shift(output_abs_max_int32.to(torch.float32)) 
+        output_shift, output_scale_factor = get_scale_shift(output_abs_max_int32.to(torch.float32)) 
         
-        output_int8 = quantize_to_int8_shifted(output_int32_accum.to(torch.float32), output_shift)
+        output_int8 = quantize_to_int8_shifted(output_int32_accum.to(torch.float32), output_scale_factor)
         
-        output_dequant = dequantize_from_int8_shifted(output_int8, output_shift)
+        output_dequant = dequantize_from_int8_shifted(output_int8, output_scale_factor)
 
         # 4. Apply bias
         if bias_fp32 is not None:
@@ -135,8 +137,8 @@ class PureInt8Matmul(Function):
 
         # 1. Quantize grad_output to INT8 using a new dynamic shift (with stochastic rounding)
         grad_output_abs_max = grad_output_fp32.abs().max()
-        grad_output_shift, _ = get_scale_shift(grad_output_abs_max)
-        grad_output_int8 = quantize_to_int8_shifted(grad_output_fp32, grad_output_shift, stochastic=True)
+        grad_output_shift, grad_output_scale_factor = get_scale_shift(grad_output_abs_max)
+        grad_output_int8 = quantize_to_int8_shifted(grad_output_fp32, grad_output_scale_factor, stochastic=True)
 
         # 2. Calculate gradients using INT8 matmul
         # dW = input.T @ grad_output
@@ -155,7 +157,8 @@ class PureInt8Matmul(Function):
             # Result is (Out, In) which matches weight shape.
             
             grad_weight_dequant_shift = input_shift + grad_output_shift
-            grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.float32), grad_weight_dequant_shift) 
+            grad_weight_scale_factor = torch.pow(2.0, grad_weight_dequant_shift)
+            grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.float32), grad_weight_scale_factor) 
 
         # dX = grad_output @ weight.T
         if ctx.needs_input_grad[0]:
@@ -174,7 +177,8 @@ class PureInt8Matmul(Function):
             grad_input_int32_accum = grad_input_int32_accum_flattened.reshape(ctx.input_fp32_shape[0], ctx.input_fp32_shape[1], ctx.input_fp32_shape[2])
 
             grad_input_dequant_shift = grad_output_shift + weight_shift
-            grad_input = dequantize_from_int8_shifted(grad_input_int32_accum.to(torch.float32), grad_input_dequant_shift) 
+            grad_input_scale_factor = torch.pow(2.0, grad_input_dequant_shift)
+            grad_input = dequantize_from_int8_shifted(grad_input_int32_accum.to(torch.float32), grad_input_scale_factor) 
             
             grad_input = grad_input.reshape(ctx.input_fp32_shape)
 
