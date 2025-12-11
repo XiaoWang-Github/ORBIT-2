@@ -94,10 +94,12 @@ class PureInt8Matmul(Function):
         
         # We need (Batch, Out) = (Batch, In) @ (In, Out). 
         # weight_int8 is (Out, In). So we use weight_int8.t() which is (In, Out).
-        weight_int8_t_contiguous = weight_int8.t().contiguous()
+        # We pass the transposed view directly without .contiguous() to allow Triton to use 
+        # stride-1 access along the K dimension (which is stride(0) of the transposed view).
+        weight_int8_t = weight_int8.t()
         
         # Output is INT32
-        output_int32_accum_flattened = triton_int8_matmul(input_int8_flattened, weight_int8_t_contiguous)
+        output_int32_accum_flattened = triton_int8_matmul(input_int8_flattened, weight_int8_t)
         
         # Reshape back to original dimensions
         output_shape = list(input_fp32.shape)
