@@ -644,6 +644,8 @@ def run_training_epochs(
         profile_batches = os.environ.get("PROFILE_BATCH_TIME", "0") == "1"
         log_mem_every = int(os.environ.get("LOG_MEM_EVERY", "0"))
 
+        last_log_t = time.perf_counter()
+
         for batch_idx, batch in enumerate(train_dataloader):
             if world_rank == 0:
                 start_event = end_event = None
@@ -687,6 +689,15 @@ def run_training_epochs(
                     device,
                     f"batch_idx {batch_idx} get_lr {scheduler.get_lr()} after optimizer step",
                     world_rank,
+                )
+
+            if world_rank == 0 and not profile_batches and (batch_idx % 20 == 0):
+                now = time.perf_counter()
+                approx_step = now - last_log_t
+                last_log_t = now
+                print(
+                    f"Batch {batch_idx}: approx {approx_step:0.4f} seconds (no sync)",
+                    flush=True,
                 )
 
             if world_rank == 0 and profile_batches and (batch_idx % 10 == 0):
