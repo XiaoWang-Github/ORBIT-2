@@ -641,10 +641,16 @@ def run_training_epochs(
         if world_rank == 0:
             print(f"Starting epoch {epoch}", flush=True)
 
+        profile_batches = os.environ.get("PROFILE_BATCH_TIME", "0") == "1"
+        log_mem_every = int(os.environ.get("LOG_MEM_EVERY", "0"))
+
         for batch_idx, batch in enumerate(train_dataloader):
             if world_rank == 0:
-                torch.cuda.synchronize(device=device)
-                tic1 = time.perf_counter()
+                start_event = end_event = None
+                if profile_batches:
+                    start_event = torch.cuda.Event(enable_timing=True)
+                    end_event = torch.cuda.Event(enable_timing=True)
+                    start_event.record()
 
             try:
                 loss = training_step(
@@ -676,21 +682,21 @@ def run_training_epochs(
                 else:
                     raise e # Re-raise other errors
 
-            if world_rank == 0:
+            if world_rank == 0 and log_mem_every > 0 and (batch_idx % log_mem_every) == 0:
                 log_gpu_memory(
                     device,
                     f"batch_idx {batch_idx} get_lr {scheduler.get_lr()} after optimizer step",
                     world_rank,
                 )
 
-            if world_rank == 0:
-                torch.cuda.synchronize(device=device)
-                tic4 = time.perf_counter()
-                if batch_idx % 10 == 0:
-                    print(
-                        f"Batch {batch_idx}: {(tic4-tic1):0.4f} seconds",
-                        flush=True,
-                    )
+            if world_rank == 0 and profile_batches and (batch_idx % 10 == 0):
+                end_event.record()
+                end_event.synchronize()
+                elapsed_ms = start_event.elapsed_time(end_event)
+                print(
+                    f"Batch {batch_idx}: {elapsed_ms/1000:0.4f} seconds (profiled)",
+                    flush=True,
+                )
 
         scheduler.step()
 
