@@ -3,6 +3,7 @@ from argparse import ArgumentParser
 import os
 import torch
 import functools
+import subprocess
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.wrap import wrap, transformer_auto_wrap_policy
 import torch.distributed as dist
@@ -52,6 +53,37 @@ def debug_print(*args, **kwargs):
     # Print only for rank 0, or if all_ranks is True
     if rank == 0 or kwargs.pop("all_ranks", False):
         print(f"[DEBUG_RANK_{rank}]", *args, **kwargs, flush=True)
+
+
+def resolve_master_addr():
+    """Resolve a single MASTER_ADDR for all ranks when launched via SLURM.
+
+    Previously we set MASTER_ADDR to each rank's hostname which works only on
+    single-node jobs. On multi-node runs every rank tried to rendezvous on its
+    own hostname, so process group initialization hung before the first epoch.
+    We now pick the first host in SLURM_NODELIST (or respect an existing
+    MASTER_ADDR) so all ranks share the same rendezvous endpoint.
+    """
+    if os.environ.get("MASTER_ADDR"):
+        return os.environ["MASTER_ADDR"]
+
+    nodelist = os.environ.get("SLURM_NODELIST") or os.environ.get("SLURM_JOB_NODELIST")
+    if not nodelist:
+        return "127.0.0.1"
+
+    try:
+        hostnames = (
+            subprocess.check_output(["scontrol", "show", "hostnames", nodelist])
+            .decode()
+            .splitlines()
+        )
+        if hostnames:
+            return hostnames[0]
+    except Exception as exc:
+        print(f"Failed to resolve MASTER_ADDR from SLURM_NODELIST: {exc}", flush=True)
+
+    return "127.0.0.1"
+
 
 def validate_data_type(data_type):
     """Validate that data_type is either bfloat16 or float32.
@@ -1430,14 +1462,18 @@ def main(device):
 if __name__ == "__main__":
     # Check if SLURM environment variables are set
     if "SLURM_NTASKS" in os.environ and "SLURM_PROCID" in os.environ and "SLURM_LOCALID" in os.environ:
-        os.environ["MASTER_ADDR"] = str(os.environ["HOSTNAME"])
-        os.environ["MASTER_PORT"] = "29500"
-        # os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"] # Already set by SLURM
-        # os.environ["RANK"] = os.environ["SLURM_PROCID"] # Already set by SLURM
+        os.environ["MASTER_ADDR"] = resolve_master_addr()
+        os.environ.setdefault("MASTER_PORT", "29500")
 
         world_size = int(os.environ["SLURM_NTASKS"])
         world_rank = int(os.environ["SLURM_PROCID"])
         local_rank = int(os.environ["SLURM_LOCALID"])
+
+        if world_rank == 0:
+            print(
+                f"Using MASTER_ADDR={os.environ['MASTER_ADDR']} MASTER_PORT={os.environ['MASTER_PORT']}",
+                flush=True,
+            )
     else:
         # Default to single process for local development/testing
         print("SLURM environment variables not found. Defaulting to single-process (rank 0 of 1).", flush=True)
