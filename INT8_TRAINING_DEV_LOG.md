@@ -41,6 +41,11 @@ We are adopting an aggressive **"Pure INT8 Backward"** strategy. Unlike conventi
 - [ ] Profile memory usage and throughput on target hardware.
 - [ ] Iterate on scaling strategies if convergence issues arise.
 
+## Short Sprint (Performance Rescue)
+- Replace custom Triton INT8 matmul with rocBLAS/rocBLASLt via `torch.ops.aten._int_mm` (target MI250x MFMA path) for both fwd/bwd.
+- Reduce quantization overhead: pre-quantize weights once per epoch (per-tensor scale) and reuse activation scales within a step/EMA; drop output re-quantize→dequant hop.
+- Profile a single step to confirm time split (quantize/dequant vs GEMM) and validate rocBLASLt is hit.
+
 ## Log Entries
 
 ### 2025-12-09: Triton Kernel Integration & Forward Pass Validation

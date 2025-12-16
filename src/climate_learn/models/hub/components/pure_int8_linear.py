@@ -5,7 +5,8 @@ from torch.autograd import Function
 import math
 import torch.distributed as dist
 import os
-from .triton_ops import triton_int8_matmul
+# Use ROCm/ATen int8 GEMM (hits rocBLASLt on MI250x) instead of custom Triton
+_int_mm = torch.ops.aten._int_mm
 
 # --- Quantization and Dequantization Helper Functions ---
 
@@ -76,43 +77,40 @@ class PureInt8Matmul(Function):
     Backward pass also uses INT8 for gradient computations.
     """
     @staticmethod
-    def forward(ctx, input_fp32, weight_fp32, bias_fp32):
+    def forward(ctx, input_fp32, weight_fp32, bias_fp32, weight_int8_cached=None, weight_shift_cached=None, weight_scale_cached=None):
         # 1. Determine shift amounts for input and weight
         input_abs_max = input_fp32.abs().max()
-        weight_abs_max = weight_fp32.abs().max()
-
         input_shift, input_scale_factor = get_scale_shift(input_abs_max)
-        weight_shift, weight_scale_factor = get_scale_shift(weight_abs_max)
+
+        # If cached quantized weight is provided, reuse it; otherwise compute fresh
+        if weight_int8_cached is None or weight_shift_cached is None or weight_scale_cached is None:
+            weight_abs_max = weight_fp32.abs().max()
+            weight_shift, weight_scale_factor = get_scale_shift(weight_abs_max)
+            weight_int8 = quantize_to_int8_shifted(weight_fp32, weight_scale_factor, stochastic=False)
+        else:
+            weight_int8 = weight_int8_cached
+            weight_shift = weight_shift_cached
+            weight_scale_factor = weight_scale_cached
         
         # 2. Quantize input and weight to INT8
         input_int8 = quantize_to_int8_shifted(input_fp32, input_scale_factor, stochastic=False)
-        weight_int8 = quantize_to_int8_shifted(weight_fp32, weight_scale_factor, stochastic=False)
 
-        # 3. Perform INT8 matrix multiplication using explicit torch._int_mm for hardware acceleration
+        # 3. Perform INT8 matrix multiplication using rocBLASLt via ATen _int_mm
         # Reshape input to 2D
         input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1]).contiguous()
-        
-        # We need (Batch, Out) = (Batch, In) @ (In, Out). 
-        # weight_int8 is (Out, In). So we use weight_int8.t() which is (In, Out).
-        # We pass the transposed view directly without .contiguous() to allow Triton to use 
-        # stride-1 access along the K dimension (which is stride(0) of the transposed view).
-        weight_int8_t = weight_int8.t()
-        
+        weight_int8_t = weight_int8.t().contiguous()  # (In, Out) contiguous for GEMM
+
         # Output is INT32
-        output_int32_accum_flattened = triton_int8_matmul(input_int8_flattened, weight_int8_t)
-        
+        output_int32_accum_flattened = _int_mm(input_int8_flattened, weight_int8_t)
+
         # Reshape back to original dimensions
         output_shape = list(input_fp32.shape)
         output_shape[-1] = weight_int8.shape[0] # out_features
         output_int32_accum = output_int32_accum_flattened.reshape(output_shape)
         
         # Determine the output shift based on the product of input and weight scales.
-        output_abs_max_int32 = output_int32_accum.abs().max()
-        output_shift, output_scale_factor = get_scale_shift(output_abs_max_int32.to(torch.float32)) 
-        
-        output_int8 = quantize_to_int8_shifted(output_int32_accum.to(torch.float32), output_scale_factor)
-        
-        output_dequant = dequantize_from_int8_shifted(output_int8, output_scale_factor)
+        # Instead of re-quantizing output, directly dequantize int32 accum to BF16 to avoid extra traffic.
+        output_dequant = output_int32_accum.to(torch.bfloat16)
 
         # 4. Apply bias
         if bias_fp32 is not None:
@@ -122,7 +120,6 @@ class PureInt8Matmul(Function):
         ctx.save_for_backward(input_int8, weight_int8)
         ctx.input_shift = input_shift
         ctx.weight_shift = weight_shift
-        ctx.output_shift = output_shift 
         ctx.input_fp32_shape = input_fp32.shape
         ctx.has_bias = bias_fp32 is not None
 
@@ -153,14 +150,14 @@ class PureInt8Matmul(Function):
             # grad_output is (Batch, Out). input is (Batch, In).
             # So we compute grad_output.T @ input.
             grad_output_t_contiguous = grad_output_int8_flattened.t().contiguous()
-            
-            grad_weight_int32_accum = triton_int8_matmul(grad_output_t_contiguous, input_int8_flattened)
+
+            grad_weight_int32_accum = _int_mm(grad_output_t_contiguous, input_int8_flattened)
             
             # Result is (Out, In) which matches weight shape.
             
             grad_weight_dequant_shift = input_shift + grad_output_shift
             grad_weight_scale_factor = torch.pow(2.0, grad_weight_dequant_shift)
-            grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.float32), grad_weight_scale_factor) 
+            grad_weight = dequantize_from_int8_shifted(grad_weight_int32_accum.to(torch.float32), grad_weight_scale_factor)
 
         # dX = grad_output @ weight.T
         if ctx.needs_input_grad[0]:
@@ -172,8 +169,8 @@ class PureInt8Matmul(Function):
             
             # Ensure weight is contiguous
             weight_int8_contiguous = weight_int8.contiguous()
-            
-            grad_input_int32_accum_flattened = triton_int8_matmul(grad_output_int8_flattened, weight_int8_contiguous)
+
+            grad_input_int32_accum_flattened = _int_mm(grad_output_int8_flattened, weight_int8_contiguous)
             
             # Reshape back to original input shape (batch dims + in_features)
             grad_input_int32_accum = grad_input_int32_accum_flattened.reshape(ctx.input_fp32_shape[0], ctx.input_fp32_shape[1], ctx.input_fp32_shape[2])
@@ -188,7 +185,8 @@ class PureInt8Matmul(Function):
         if ctx.needs_input_grad[2] and ctx.has_bias:
             grad_bias = grad_output_fp32.sum(0) # Bias gradient remains FP32 for now
 
-        return grad_input, grad_weight, grad_bias
+        # No gradients for cached tensors passed through forward
+        return grad_input, grad_weight, grad_bias, None, None, None
 
 
 # --- Pure INT8 Linear Layer Module ---
@@ -209,6 +207,11 @@ class PureInt8Linear(nn.Module):
             self.register_parameter('bias', None)
             
         self.int8_enabled = False # Flag to control precision mode
+        # Cache quantized weight to avoid re-quantizing every forward
+        self._cached_weight_int8 = None
+        self._cached_weight_shift = None
+        self._cached_weight_scale = None
+        self._cached_weight_version = None
 
         self.reset_parameters()
 
@@ -223,10 +226,31 @@ class PureInt8Linear(nn.Module):
     def forward(self, input):
         if self.int8_enabled:
             # PureInt8Matmul will handle the quantization internally
-            return PureInt8Matmul.apply(input, self.weight, self.bias)
+            weight_int8, weight_shift, weight_scale = self._get_cached_weight_quant()
+            return PureInt8Matmul.apply(input, self.weight, self.bias, weight_int8, weight_shift, weight_scale)
         else:
             # Standard PyTorch linear (bfloat16/float32)
             return F.linear(input, self.weight, self.bias)
+
+    def _get_cached_weight_quant(self):
+        """Quantize weight once per weight version to reduce overhead."""
+        current_version = self.weight._version
+        if (
+            self._cached_weight_version != current_version
+            or self._cached_weight_int8 is None
+            or self._cached_weight_shift is None
+            or self._cached_weight_scale is None
+        ):
+            with torch.no_grad():
+                weight_abs_max = self.weight.abs().max()
+                weight_shift, weight_scale = get_scale_shift(weight_abs_max)
+                self._cached_weight_int8 = quantize_to_int8_shifted(
+                    self.weight, weight_scale, stochastic=False
+                )
+                self._cached_weight_shift = weight_shift
+                self._cached_weight_scale = weight_scale
+                self._cached_weight_version = current_version
+        return self._cached_weight_int8, self._cached_weight_shift, self._cached_weight_scale
 
     def extra_repr(self):
         return f'in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}, int8_enabled={self.int8_enabled}'
