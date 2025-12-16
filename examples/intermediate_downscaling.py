@@ -1496,7 +1496,8 @@ if __name__ == "__main__":
         rank=world_rank,
         world_size=world_size,
     )
-    torch.autograd.set_detect_anomaly(True)
+    # Disable autograd anomaly checking for performance (can be re-enabled manually if needed)
+    torch.autograd.set_detect_anomaly(False)
 
     print("Using dist.init_process_group. world_size ", world_size, flush=True)
 
