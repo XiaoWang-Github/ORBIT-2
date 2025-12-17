@@ -44,6 +44,10 @@ export TRITON_CACHE_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache/triton"
 export ATTENTION_DEBUG=${ATTENTION_DEBUG:-0}                 # set 1 to enable NaN/Inf logging in attention
 export INT8_DISABLE_STOCHASTIC_ROUND=${INT8_DISABLE_STOCHASTIC_ROUND:-0} # set 1 to disable stochastic rounding in INT8 backward for perf runs
 export INT8_WEIGHT_CACHE_STRATEGY=${INT8_WEIGHT_CACHE_STRATEGY:-step}   # step|epoch|off for int8 weight cache refresh
+export INT8_INPUT_SCALE_EMA=${INT8_INPUT_SCALE_EMA:-0}                  # 0 to disable, otherwise alpha in (0,1) for input absmax EMA
+# rocBLASLt logging (set to 1 to trace kernel selection)
+export PYTORCH_ROCBLASLT_LOG_LEVEL=${PYTORCH_ROCBLASLT_LOG_LEVEL:-0}
+export HIPBLASLT_LOG_MASK=${HIPBLASLT_LOG_MASK:-0}
 
 #source activate /lustre/orion/lrn036/world-shared/xf9/torch27-rocm63
 #conda activate /lustre/orion/lrn036/world-shared/xf9/torch26

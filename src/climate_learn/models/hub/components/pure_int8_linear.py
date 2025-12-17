@@ -9,6 +9,7 @@ import os
 _int_mm = torch.ops.aten._int_mm
 _DISABLE_STOCHASTIC_ROUNDING = os.environ.get("INT8_DISABLE_STOCHASTIC_ROUND", "0") == "1"
 _WEIGHT_CACHE_STRATEGY = os.environ.get("INT8_WEIGHT_CACHE_STRATEGY", "step")  # step|epoch|off
+_INPUT_SCALE_EMA_ALPHA = float(os.environ.get("INT8_INPUT_SCALE_EMA", "0"))
 
 # --- Quantization and Dequantization Helper Functions ---
 
@@ -79,9 +80,9 @@ class PureInt8Matmul(Function):
     Backward pass also uses INT8 for gradient computations.
     """
     @staticmethod
-    def forward(ctx, input_fp32, weight_fp32, bias_fp32, weight_int8_cached=None, weight_shift_cached=None, weight_scale_cached=None, weight_int8_t_cached=None):
+    def forward(ctx, input_fp32, weight_fp32, bias_fp32, weight_int8_cached=None, weight_shift_cached=None, weight_scale_cached=None, weight_int8_t_cached=None, input_abs_override=None):
         # 1. Determine shift amounts for input and weight
-        input_abs_max = input_fp32.abs().max()
+        input_abs_max = input_fp32.abs().max() if input_abs_override is None else input_abs_override
         input_shift, input_scale_factor = get_scale_shift(input_abs_max)
 
         # If cached quantized weight is provided, reuse it; otherwise compute fresh
@@ -194,8 +195,8 @@ class PureInt8Matmul(Function):
             grad_bias = grad_output_fp32.sum(0) # Bias gradient remains FP32 for now
 
         # No gradients for cached tensors passed through forward
-        # Extra None for cached transposed weight tensor
-        return grad_input, grad_weight, grad_bias, None, None, None, None
+        # Extra None for cached transposed weight tensor and input_abs_override
+        return grad_input, grad_weight, grad_bias, None, None, None, None, None
 
 
 # --- Pure INT8 Linear Layer Module ---
@@ -222,6 +223,8 @@ class PureInt8Linear(nn.Module):
         self._cached_weight_shift = None
         self._cached_weight_scale = None
         self._cached_weight_version = None
+        # Optional EMA for input abs max
+        self._input_abs_ema = None
 
         self.reset_parameters()
 
@@ -235,9 +238,30 @@ class PureInt8Linear(nn.Module):
 
     def forward(self, input):
         if self.int8_enabled:
+            input_abs_override = None
+            if 0.0 < _INPUT_SCALE_EMA_ALPHA < 1.0:
+                with torch.no_grad():
+                    current_abs = input.detach().abs().max()
+                    if self._input_abs_ema is None:
+                        self._input_abs_ema = current_abs
+                    else:
+                        self._input_abs_ema = (
+                            _INPUT_SCALE_EMA_ALPHA * self._input_abs_ema
+                            + (1.0 - _INPUT_SCALE_EMA_ALPHA) * current_abs
+                        )
+                    input_abs_override = self._input_abs_ema
             # PureInt8Matmul will handle the quantization internally
             weight_int8, weight_int8_t, weight_shift, weight_scale = self._get_cached_weight_quant()
-            return PureInt8Matmul.apply(input, self.weight, self.bias, weight_int8, weight_shift, weight_scale, weight_int8_t)
+            return PureInt8Matmul.apply(
+                input,
+                self.weight,
+                self.bias,
+                weight_int8,
+                weight_shift,
+                weight_scale,
+                weight_int8_t,
+                input_abs_override,
+            )
         else:
             # Standard PyTorch linear (bfloat16/float32)
             return F.linear(input, self.weight, self.bias)
