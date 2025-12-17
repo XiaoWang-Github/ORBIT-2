@@ -7,6 +7,7 @@ import torch.distributed as dist
 import os
 # Use ROCm/ATen int8 GEMM (hits rocBLASLt on MI250x) instead of custom Triton
 _int_mm = torch.ops.aten._int_mm
+_DISABLE_STOCHASTIC_ROUNDING = os.environ.get("INT8_DISABLE_STOCHASTIC_ROUND", "0") == "1"
 
 # --- Quantization and Dequantization Helper Functions ---
 
@@ -137,7 +138,11 @@ class PureInt8Matmul(Function):
         # 1. Quantize grad_output to INT8 using a new dynamic shift (with stochastic rounding)
         grad_output_abs_max = grad_output_fp32.abs().max()
         grad_output_shift, grad_output_scale_factor = get_scale_shift(grad_output_abs_max)
-        grad_output_int8 = quantize_to_int8_shifted(grad_output_fp32, grad_output_scale_factor, stochastic=True)
+        grad_output_int8 = quantize_to_int8_shifted(
+            grad_output_fp32,
+            grad_output_scale_factor,
+            stochastic=not _DISABLE_STOCHASTIC_ROUNDING,
+        )
 
         # 2. Calculate gradients using INT8 matmul
         # dW = input.T @ grad_output

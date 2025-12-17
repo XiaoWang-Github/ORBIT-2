@@ -45,6 +45,8 @@ We are adopting an aggressive **"Pure INT8 Backward"** strategy. Unlike conventi
 - Replace custom Triton INT8 matmul with rocBLAS/rocBLASLt via `torch.ops.aten._int_mm` (target MI250x MFMA path) for both fwd/bwd.
 - Reduce quantization overhead: pre-quantize weights once per epoch (per-tensor scale) and reuse activation scales within a step/EMA; drop output re-quantize→dequant hop.
 - Profile a single step to confirm time split (quantize/dequant vs GEMM) and validate rocBLASLt is hit.
+- Gate NaN/Inf instrumentation behind `ATTENTION_DEBUG` so perf runs skip global reductions in attention forward.
+- Add a perf toggle to disable stochastic rounding in backward (keep correctness mode available) to cut random/uniform noise kernel cost during timing runs.
 
 ## Log Entries
 
