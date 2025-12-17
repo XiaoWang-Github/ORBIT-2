@@ -194,7 +194,8 @@ class PureInt8Matmul(Function):
             grad_bias = grad_output_fp32.sum(0) # Bias gradient remains FP32 for now
 
         # No gradients for cached tensors passed through forward
-        return grad_input, grad_weight, grad_bias, None, None, None
+        # Extra None for cached transposed weight tensor
+        return grad_input, grad_weight, grad_bias, None, None, None, None
 
 
 # --- Pure INT8 Linear Layer Module ---
