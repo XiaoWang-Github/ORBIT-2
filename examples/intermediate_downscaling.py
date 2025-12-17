@@ -40,6 +40,8 @@ from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
 from climate_learn.dist.profile import *
 from utils import seed_everything, init_par_groups
 
+_INT8_WEIGHT_CACHE_STRATEGY = os.environ.get("INT8_WEIGHT_CACHE_STRATEGY", "step")  # step|epoch|off
+
 def debug_print(*args, **kwargs):
     # Check rank using dist or env vars (fallback)
     rank = 0
@@ -606,6 +608,16 @@ def create_data_module(data_key, config, world_rank, device, do_tiling, div, ove
     return data_module, train_dataloader, val_dataloader
 
 
+def refresh_int8_weight_cache(model, force=False):
+    """Refresh cached INT8 weights according to cache strategy."""
+    if _INT8_WEIGHT_CACHE_STRATEGY == "off":
+        return
+    from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
+    for module in model.modules():
+        if isinstance(module, PureInt8Linear) and getattr(module, "int8_enabled", False):
+            module.refresh_int8_cache(force=force)
+
+
 def run_training_epochs(
     model,
     optimizer,
@@ -650,6 +662,9 @@ def run_training_epochs(
             if isinstance(module, PureInt8Linear):
                 module.int8_enabled = use_int8
                 count += 1
+        # Refresh caches at mode switch to avoid stale weights when entering INT8
+        if use_int8 and _INT8_WEIGHT_CACHE_STRATEGY in ("epoch", "step"):
+            refresh_int8_weight_cache(model, force=True)
         
         if world_rank == 0:
              print(f"Updated int8_enabled={use_int8} for {count} PureInt8Linear modules.", flush=True)
@@ -699,6 +714,8 @@ def run_training_epochs(
                     # Gradient Clipping
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
+                    if use_int8 and _INT8_WEIGHT_CACHE_STRATEGY == "step":
+                        refresh_int8_weight_cache(model, force=True)
                 else:
                     scaler.scale(loss).backward()
                     scaler.unscale_(optimizer) # Unscale before clipping
@@ -706,6 +723,8 @@ def run_training_epochs(
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     scaler.step(optimizer)
                     scaler.update()
+                    if use_int8 and _INT8_WEIGHT_CACHE_STRATEGY == "step":
+                        refresh_int8_weight_cache(model, force=True)
                     if scaler._scale < min_scale:
                         scaler._scale = torch.tensor(min_scale).to(scaler._scale)
             except RuntimeError as e:

@@ -8,6 +8,7 @@ import os
 # Use ROCm/ATen int8 GEMM (hits rocBLASLt on MI250x) instead of custom Triton
 _int_mm = torch.ops.aten._int_mm
 _DISABLE_STOCHASTIC_ROUNDING = os.environ.get("INT8_DISABLE_STOCHASTIC_ROUND", "0") == "1"
+_WEIGHT_CACHE_STRATEGY = os.environ.get("INT8_WEIGHT_CACHE_STRATEGY", "step")  # step|epoch|off
 
 # --- Quantization and Dequantization Helper Functions ---
 
@@ -78,20 +79,22 @@ class PureInt8Matmul(Function):
     Backward pass also uses INT8 for gradient computations.
     """
     @staticmethod
-    def forward(ctx, input_fp32, weight_fp32, bias_fp32, weight_int8_cached=None, weight_shift_cached=None, weight_scale_cached=None):
+    def forward(ctx, input_fp32, weight_fp32, bias_fp32, weight_int8_cached=None, weight_shift_cached=None, weight_scale_cached=None, weight_int8_t_cached=None):
         # 1. Determine shift amounts for input and weight
         input_abs_max = input_fp32.abs().max()
         input_shift, input_scale_factor = get_scale_shift(input_abs_max)
 
         # If cached quantized weight is provided, reuse it; otherwise compute fresh
-        if weight_int8_cached is None or weight_shift_cached is None or weight_scale_cached is None:
+        if weight_int8_cached is None or weight_shift_cached is None or weight_scale_cached is None or weight_int8_t_cached is None:
             weight_abs_max = weight_fp32.abs().max()
             weight_shift, weight_scale_factor = get_scale_shift(weight_abs_max)
             weight_int8 = quantize_to_int8_shifted(weight_fp32, weight_scale_factor, stochastic=False)
+            weight_int8_t = weight_int8.t().contiguous()
         else:
             weight_int8 = weight_int8_cached
             weight_shift = weight_shift_cached
             weight_scale_factor = weight_scale_cached
+            weight_int8_t = weight_int8_t_cached
         
         # 2. Quantize input and weight to INT8
         input_int8 = quantize_to_int8_shifted(input_fp32, input_scale_factor, stochastic=False)
@@ -99,7 +102,7 @@ class PureInt8Matmul(Function):
         # 3. Perform INT8 matrix multiplication using rocBLASLt via ATen _int_mm
         # Reshape input to 2D
         input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1]).contiguous()
-        weight_int8_t = weight_int8.t().contiguous()  # (In, Out) contiguous for GEMM
+        # weight_int8_t already contiguous if cached; otherwise computed above  # (In, Out)
 
         # Output is INT32
         output_int32_accum_flattened = _int_mm(input_int8_flattened, weight_int8_t)
@@ -214,6 +217,7 @@ class PureInt8Linear(nn.Module):
         self.int8_enabled = False # Flag to control precision mode
         # Cache quantized weight to avoid re-quantizing every forward
         self._cached_weight_int8 = None
+        self._cached_weight_int8_t = None
         self._cached_weight_shift = None
         self._cached_weight_scale = None
         self._cached_weight_version = None
@@ -231,8 +235,8 @@ class PureInt8Linear(nn.Module):
     def forward(self, input):
         if self.int8_enabled:
             # PureInt8Matmul will handle the quantization internally
-            weight_int8, weight_shift, weight_scale = self._get_cached_weight_quant()
-            return PureInt8Matmul.apply(input, self.weight, self.bias, weight_int8, weight_shift, weight_scale)
+            weight_int8, weight_int8_t, weight_shift, weight_scale = self._get_cached_weight_quant()
+            return PureInt8Matmul.apply(input, self.weight, self.bias, weight_int8, weight_shift, weight_scale, weight_int8_t)
         else:
             # Standard PyTorch linear (bfloat16/float32)
             return F.linear(input, self.weight, self.bias)
@@ -243,6 +247,7 @@ class PureInt8Linear(nn.Module):
         if (
             self._cached_weight_version != current_version
             or self._cached_weight_int8 is None
+            or self._cached_weight_int8_t is None
             or self._cached_weight_shift is None
             or self._cached_weight_scale is None
         ):
@@ -252,10 +257,26 @@ class PureInt8Linear(nn.Module):
                 self._cached_weight_int8 = quantize_to_int8_shifted(
                     self.weight, weight_scale, stochastic=False
                 )
+                self._cached_weight_int8_t = self._cached_weight_int8.t().contiguous()
                 self._cached_weight_shift = weight_shift
                 self._cached_weight_scale = weight_scale
                 self._cached_weight_version = current_version
-        return self._cached_weight_int8, self._cached_weight_shift, self._cached_weight_scale
+        return self._cached_weight_int8, self._cached_weight_int8_t, self._cached_weight_shift, self._cached_weight_scale
+
+    def refresh_int8_cache(self, force: bool = False):
+        """Refresh cached weight quantization based on strategy."""
+        if _WEIGHT_CACHE_STRATEGY == "off":
+            # Disable cache: clear so each forward recomputes
+            self._cached_weight_version = None
+            self._cached_weight_int8 = None
+            self._cached_weight_int8_t = None
+            self._cached_weight_shift = None
+            self._cached_weight_scale = None
+            return
+        if force or _WEIGHT_CACHE_STRATEGY in ("step", "epoch"):
+            # Recompute cache regardless of version (step boundary)
+            self._cached_weight_version = None
+            self._get_cached_weight_quant()
 
     def extra_repr(self):
         return f'in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}, int8_enabled={self.int8_enabled}'
