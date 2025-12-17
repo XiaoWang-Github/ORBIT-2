@@ -43,6 +43,7 @@ export TRITON_CACHE_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache/triton"
 # INT8 debug/perf toggles (override when submitting: env VAR=value sbatch ...)
 export ATTENTION_DEBUG=${ATTENTION_DEBUG:-0}                 # set 1 to enable NaN/Inf logging in attention
 export INT8_DISABLE_STOCHASTIC_ROUND=${INT8_DISABLE_STOCHASTIC_ROUND:-0} # set 1 to disable stochastic rounding in INT8 backward for perf runs
+export INT8_WEIGHT_CACHE_STRATEGY=${INT8_WEIGHT_CACHE_STRATEGY:-step}   # step|epoch|off for int8 weight cache refresh
 
 #source activate /lustre/orion/lrn036/world-shared/xf9/torch27-rocm63
 #conda activate /lustre/orion/lrn036/world-shared/xf9/torch26
