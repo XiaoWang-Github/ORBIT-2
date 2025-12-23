@@ -413,6 +413,8 @@ class IterDataModule(torch.nn.Module):
     def train_dataloader(self):
         use_ddstore = int(os.environ.get("ORBIT_USE_DDSTORE", 0))
         # print("use_ddstore is :", use_ddstore, flush=True)
+        prefetch_factor = int(os.environ.get("DATA_PREFETCH_FACTOR", "2"))
+        use_persistent_workers = bool(int(os.environ.get("DATA_PERSISTENT_WORKERS", "1")))
 
         if use_ddstore:
             ## assume: a GPU is mapped by the local rank
@@ -453,9 +455,13 @@ class IterDataModule(torch.nn.Module):
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             collate_fn=self.collate_fn,
+            prefetch_factor=prefetch_factor if self.num_workers > 0 else None,
+            persistent_workers=self.num_workers > 0 and use_persistent_workers,
         )
 
     def val_dataloader(self):
+        prefetch_factor = int(os.environ.get("DATA_PREFETCH_FACTOR", "2"))
+        use_persistent_workers = bool(int(os.environ.get("DATA_PERSISTENT_WORKERS", "1")))
         return DataLoader(
             self.data_val,
             batch_size=self.batch_size,
@@ -464,9 +470,13 @@ class IterDataModule(torch.nn.Module):
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             collate_fn=self.collate_fn,
+            prefetch_factor=prefetch_factor if self.num_workers > 0 else None,
+            persistent_workers=self.num_workers > 0 and use_persistent_workers,
         )
 
     def test_dataloader(self):
+        prefetch_factor = int(os.environ.get("DATA_PREFETCH_FACTOR", "2"))
+        use_persistent_workers = bool(int(os.environ.get("DATA_PERSISTENT_WORKERS", "1")))
         return DataLoader(
             self.data_test,
             batch_size=self.batch_size,
@@ -475,6 +485,8 @@ class IterDataModule(torch.nn.Module):
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             collate_fn=self.collate_fn,
+            prefetch_factor=prefetch_factor if self.num_workers > 0 else None,
+            persistent_workers=self.num_workers > 0 and use_persistent_workers,
         )
 
 

@@ -10,6 +10,13 @@ _int_mm = torch.ops.aten._int_mm
 _DISABLE_STOCHASTIC_ROUNDING = os.environ.get("INT8_DISABLE_STOCHASTIC_ROUND", "0") == "1"
 _WEIGHT_CACHE_STRATEGY = os.environ.get("INT8_WEIGHT_CACHE_STRATEGY", "step")  # step|epoch|off
 _INPUT_SCALE_EMA_ALPHA = float(os.environ.get("INT8_INPUT_SCALE_EMA", "0"))
+_INT8_OUTPUT_DTYPE = torch.bfloat16
+
+
+def set_int8_output_dtype(dtype: torch.dtype) -> None:
+    """Set the output dtype for INT8 path (e.g., torch.float32 or torch.bfloat16)."""
+    global _INT8_OUTPUT_DTYPE
+    _INT8_OUTPUT_DTYPE = dtype
 
 # --- Quantization and Dequantization Helper Functions ---
 
@@ -102,7 +109,9 @@ class PureInt8Matmul(Function):
 
         # 3. Perform INT8 matrix multiplication using rocBLASLt via ATen _int_mm
         # Reshape input to 2D
-        input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1]).contiguous()
+        input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1])
+        if not input_int8_flattened.is_contiguous():
+            input_int8_flattened = input_int8_flattened.contiguous()
         # weight_int8_t already contiguous if cached; otherwise computed above  # (In, Out)
 
         # Output is INT32
@@ -113,27 +122,29 @@ class PureInt8Matmul(Function):
         output_shape[-1] = weight_int8.shape[0] # out_features
         output_int32_accum = output_int32_accum_flattened.reshape(output_shape)
         
-        # Determine the output shift based on the product of input and weight scales.
-        # Instead of re-quantizing output, directly dequantize int32 accum to BF16 to avoid extra traffic.
-        output_dequant = output_int32_accum.to(torch.bfloat16)
+        # Determine output scale and dequantize int32 accumulators
+        output_scale_factor = input_scale_factor * weight_scale_factor  # per-tensor scale
+        output_dequant = dequantize_from_int8_shifted(
+            output_int32_accum.to(torch.float32), output_scale_factor
+        )
 
         # 4. Apply bias
         if bias_fp32 is not None:
             output_dequant += bias_fp32 
 
         # Store quantized inputs, weights, and shifts for backward
-        ctx.save_for_backward(input_int8, weight_int8)
+        ctx.save_for_backward(input_int8, weight_int8, weight_int8_t)
         ctx.input_shift = input_shift
         ctx.weight_shift = weight_shift
         ctx.input_fp32_shape = input_fp32.shape
         ctx.has_bias = bias_fp32 is not None
 
-        # CK Attention requires bfloat16 or float16 input. Cast output to bfloat16.
-        return output_dequant.to(torch.bfloat16)
+        # Cast output to configured dtype for INT8 path.
+        return output_dequant.to(_INT8_OUTPUT_DTYPE)
 
     @staticmethod
     def backward(ctx, grad_output_fp32):
-        input_int8, weight_int8 = ctx.saved_tensors
+        input_int8, weight_int8, weight_int8_t = ctx.saved_tensors
         input_shift = ctx.input_shift
         weight_shift = ctx.weight_shift
 
@@ -149,15 +160,17 @@ class PureInt8Matmul(Function):
         )
 
         # 2. Calculate gradients using INT8 matmul
+        # Flatten tensors once for reuse in both grad paths
+        grad_output_int8_flattened = grad_output_int8.reshape(-1, grad_output_int8.shape[-1])
+        if not grad_output_int8_flattened.is_contiguous():
+            grad_output_int8_flattened = grad_output_int8_flattened.contiguous()
+        input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1])
+        if not input_int8_flattened.is_contiguous():
+            input_int8_flattened = input_int8_flattened.contiguous()
+
         # dW = input.T @ grad_output
         if ctx.needs_input_grad[1]:
-            # Reshape for matmul
-            input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1]).contiguous()
-            grad_output_int8_flattened = grad_output_int8.reshape(-1, grad_output_int8.shape[-1]).contiguous()
-            
-            # We need (Out, In) = (Out, Batch) @ (Batch, In)
             # grad_output is (Batch, Out). input is (Batch, In).
-            # So we compute grad_output.T @ input.
             grad_output_t_contiguous = grad_output_int8_flattened.t().contiguous()
 
             grad_weight_int32_accum = _int_mm(grad_output_t_contiguous, input_int8_flattened)
@@ -170,19 +183,12 @@ class PureInt8Matmul(Function):
 
         # dX = grad_output @ weight.T
         if ctx.needs_input_grad[0]:
-            # Reshape for matmul
-            # grad_output_int8_flattened already exists
             # weight_int8 is (Out, In).
-            # We need (Batch, In) = (Batch, Out) @ (Out, In).
-            # _int_mm(grad_output, weight)
-            
-            # Ensure weight is contiguous
-            weight_int8_contiguous = weight_int8.contiguous()
-
+            weight_int8_contiguous = weight_int8 if weight_int8.is_contiguous() else weight_int8.contiguous()
             grad_input_int32_accum_flattened = _int_mm(grad_output_int8_flattened, weight_int8_contiguous)
             
-            # Reshape back to original input shape (batch dims + in_features)
-            grad_input_int32_accum = grad_input_int32_accum_flattened.reshape(ctx.input_fp32_shape[0], ctx.input_fp32_shape[1], ctx.input_fp32_shape[2])
+            # Reshape back to original input shape
+            grad_input_int32_accum = grad_input_int32_accum_flattened.reshape(ctx.input_fp32_shape)
 
             grad_input_dequant_shift = grad_output_shift + weight_shift
             grad_input_scale_factor = torch.pow(2.0, grad_input_dequant_shift)
@@ -269,13 +275,16 @@ class PureInt8Linear(nn.Module):
     def _get_cached_weight_quant(self):
         """Quantize weight once per weight version to reduce overhead."""
         current_version = self.weight._version
-        if (
-            self._cached_weight_version != current_version
+        cache_disabled = _WEIGHT_CACHE_STRATEGY == "off"
+        need_refresh = (
+            cache_disabled
+            or self._cached_weight_version != current_version
             or self._cached_weight_int8 is None
             or self._cached_weight_int8_t is None
             or self._cached_weight_shift is None
             or self._cached_weight_scale is None
-        ):
+        )
+        if need_refresh:
             with torch.no_grad():
                 weight_abs_max = self.weight.abs().max()
                 weight_shift, weight_scale = get_scale_shift(weight_abs_max)
@@ -285,7 +294,8 @@ class PureInt8Linear(nn.Module):
                 self._cached_weight_int8_t = self._cached_weight_int8.t().contiguous()
                 self._cached_weight_shift = weight_shift
                 self._cached_weight_scale = weight_scale
-                self._cached_weight_version = current_version
+                # For "off", force recompute every forward by not latching version
+                self._cached_weight_version = None if cache_disabled else current_version
         return self._cached_weight_int8, self._cached_weight_int8_t, self._cached_weight_shift, self._cached_weight_scale
 
     def refresh_int8_cache(self, force: bool = False):

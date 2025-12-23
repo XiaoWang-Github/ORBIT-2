@@ -693,6 +693,8 @@ def run_training_epochs(
 
         last_log_t = time.perf_counter()
 
+        profile_max_steps = int(os.environ.get("PROFILE_MAX_STEPS", "0"))
+
         for batch_idx, batch in enumerate(train_dataloader):
             if world_rank == 0:
                 start_event = end_event = None
@@ -705,6 +707,9 @@ def run_training_epochs(
                 loss = training_step(
                     batch, batch_idx, model, device, var_weights, train_loss
                 )
+                if world_rank == 0 and batch_idx == 0:
+                    # Quick heartbeat to confirm dataloader/first step is progressing
+                    print("Reached first batch forward/backward", flush=True)
                 epoch_loss += loss.detach()
 
                 optimizer.zero_grad()
@@ -759,6 +764,10 @@ def run_training_epochs(
                     f"Batch {batch_idx}: {elapsed_ms/1000:0.4f} seconds (profiled)",
                     flush=True,
                 )
+            if profile_max_steps > 0 and (batch_idx + 1) >= profile_max_steps:
+                if world_rank == 0:
+                    print(f"PROFILE_MAX_STEPS reached ({profile_max_steps}), ending epoch early.", flush=True)
+                break
 
         scheduler.step()
 
@@ -1173,7 +1182,7 @@ def main(device):
         scaler = None
         min_scale = None
 
-    while (epoch_start + interval_epochs) < max_epochs:
+    while epoch_start < max_epochs:
 
         for data_key in low_res_dir.keys():
             # Set up data
@@ -1311,6 +1320,9 @@ def main(device):
                     precision_dt = torch.bfloat16
                 else:
                     raise RuntimeError("Data type not supported")
+                # Ensure INT8 path output matches requested precision
+                from climate_learn.models.hub.components import pure_int8_linear
+                pure_int8_linear.set_int8_output_dtype(precision_dt)
 
                 # floating point policy
                 bfloatPolicy = MixedPrecision(

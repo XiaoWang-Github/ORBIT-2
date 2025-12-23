@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:8
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
-#SBATCH -t 02:00:00
+#SBATCH -t 06:00:00
 #SBATCH -p extended
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.error
@@ -42,11 +42,20 @@ export TORCH_EXTENSIONS_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache/torch_
 export TRITON_CACHE_DIR="/lustre/orion/proj-shared/lrn036/yoonh/cache/triton"
 # INT8 debug/perf toggles (override when submitting: env VAR=value sbatch ...)
 export ATTENTION_DEBUG=${ATTENTION_DEBUG:-0}                 # set 1 to enable NaN/Inf logging in attention
-export INT8_DISABLE_STOCHASTIC_ROUND=${INT8_DISABLE_STOCHASTIC_ROUND:-0} # set 1 to disable stochastic rounding in INT8 backward for perf runs
-export INT8_WEIGHT_CACHE_STRATEGY=${INT8_WEIGHT_CACHE_STRATEGY:-step}   # step|epoch|off for int8 weight cache refresh
-export INT8_INPUT_SCALE_EMA=${INT8_INPUT_SCALE_EMA:-0}                  # 0 to disable, otherwise alpha in (0,1) for input absmax EMA
+export INT8_DISABLE_STOCHASTIC_ROUND=${INT8_DISABLE_STOCHASTIC_ROUND:-1} # default off for perf; set 0 to keep stochastic rounding
+export INT8_WEIGHT_CACHE_STRATEGY=${INT8_WEIGHT_CACHE_STRATEGY:-epoch}   # default to epoch cache for stability (off|step|epoch)
+export INT8_INPUT_SCALE_EMA=${INT8_INPUT_SCALE_EMA:-0.9}                 # EMA alpha for input absmax (0 disables)
+# Optional lightweight timing/logging
+export PROFILE_BATCH_TIME=${PROFILE_BATCH_TIME:-0}                      # set 1 for CUDA event timing every 10 batches
+export LOG_MEM_EVERY=${LOG_MEM_EVERY:-0}                                # set >0 to log reserved memory every N batches
+export PROFILE_MAX_STEPS=${PROFILE_MAX_STEPS:-0}                        # 0 means full epoch (no early stop)
+# DataLoader tuning to reduce I/O stalls
+export DATA_PREFETCH_FACTOR=${DATA_PREFETCH_FACTOR:-4}                  # prefetch per worker (>=2 when num_workers>0)
+export DATA_PERSISTENT_WORKERS=${DATA_PERSISTENT_WORKERS:-1}            # keep workers alive across epochs
 # rocBLASLt logging (set to 1 to trace kernel selection)
 export PYTORCH_ROCBLASLT_LOG_LEVEL=${PYTORCH_ROCBLASLT_LOG_LEVEL:-0}
+export ROCBLASLT_LOG_LEVEL=${ROCBLASLT_LOG_LEVEL:-0}
+export ROCBLASLT_LOG_MASK=${ROCBLASLT_LOG_MASK:-0}
 export HIPBLASLT_LOG_MASK=${HIPBLASLT_LOG_MASK:-0}
 
 #source activate /lustre/orion/lrn036/world-shared/xf9/torch27-rocm63
@@ -81,6 +90,11 @@ export NCCL_NET_GDR_LEVEL=3           # Typically improves performance, but remo
 export NCCL_CROSS_NIC=1               # On large systems, this NCCL setting has been found to improve performance
 export NCCL_SOCKET_IFNAME=hsn0        # NCCL/RCCL will use the high speed network to coordinate startup.
 export TORCH_NCCL_HIGH_PRIORITY=1     # Use high priority stream for the NCCL/RCCL Communicator.
+export NCCL_DEBUG=${NCCL_DEBUG:-WARN}                # lower verbosity for perf runs; set INFO when debugging hangs
+export NCCL_ASYNC_ERROR_HANDLING=${NCCL_ASYNC_ERROR_HANDLING:-1}  # fail fast on async errors
+export NCCL_DEBUG_SUBSYS=${NCCL_DEBUG_SUBSYS:-}                   # leave empty unless debugging
+export TORCH_DISTRIBUTED_DEBUG=${TORCH_DISTRIBUTED_DEBUG:-OFF}    # turn on DETAIL only when debugging
+export TORCH_NCCL_TRACE_BUFFER_SIZE=${TORCH_NCCL_TRACE_BUFFER_SIZE:-1048576} # enable flight recorder (1MB) for hang diagnostics
 
 export MIOPEN_DISABLE_CACHE=1
 export NCCL_PROTO=Simple
