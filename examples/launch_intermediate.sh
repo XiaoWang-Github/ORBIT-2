@@ -53,8 +53,8 @@ export PROFILE_MAX_STEPS=${PROFILE_MAX_STEPS:-0}                        # 0 mean
 export DATA_PREFETCH_FACTOR=${DATA_PREFETCH_FACTOR:-4}                  # prefetch per worker (>=2 when num_workers>0)
 export DATA_PERSISTENT_WORKERS=${DATA_PERSISTENT_WORKERS:-1}            # keep workers alive across epochs
 # rocBLASLt logging (set to 1 to trace kernel selection)
-export PYTORCH_ROCBLASLT_LOG_LEVEL=${PYTORCH_ROCBLASLT_LOG_LEVEL:-0}
-export ROCBLASLT_LOG_LEVEL=${ROCBLASLT_LOG_LEVEL:-0}
+export PYTORCH_ROCBLASLT_LOG_LEVEL=${PYTORCH_ROCBLASLT_LOG_LEVEL:-1}
+export ROCBLASLT_LOG_LEVEL=${ROCBLASLT_LOG_LEVEL:-1}
 export ROCBLASLT_LOG_MASK=${ROCBLASLT_LOG_MASK:-0}
 export HIPBLASLT_LOG_MASK=${HIPBLASLT_LOG_MASK:-0}
 

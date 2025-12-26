@@ -57,6 +57,26 @@ def debug_print(*args, **kwargs):
         print(f"[DEBUG_RANK_{rank}]", *args, **kwargs, flush=True)
 
 
+def maybe_enable_rocblaslt_logging():
+    """Ensure rocBLASLt logging has a per-rank output file when enabled."""
+    log_level = (
+        os.environ.get("PYTORCH_ROCBLASLT_LOG_LEVEL")
+        or os.environ.get("ROCBLASLT_LOG_LEVEL")
+        or os.environ.get("HIPBLASLT_LOG_LEVEL")
+    )
+    if not log_level or str(log_level) == "0":
+        return
+    if "ROCBLASLT_LOG_FILE" in os.environ:
+        return
+    rank = int(os.environ.get("SLURM_PROCID", os.environ.get("RANK", "0")))
+    job_id = os.environ.get("SLURM_JOB_ID", "local")
+    log_file = f"rocblaslt_{job_id}_rank{rank}.log"
+    os.environ["ROCBLASLT_LOG_FILE"] = log_file
+    os.environ.setdefault("HIPBLASLT_LOG_FILE", f"hipblaslt_{job_id}_rank{rank}.log")
+    if rank == 0:
+        print(f"rocBLASLt logging enabled -> {log_file}", flush=True)
+
+
 def resolve_master_addr():
     """Resolve a single MASTER_ADDR for all ranks when launched via SLURM.
 
@@ -1504,6 +1524,7 @@ def main(device):
 
 
 if __name__ == "__main__":
+    maybe_enable_rocblaslt_logging()
     # Check if SLURM environment variables are set
     if "SLURM_NTASKS" in os.environ and "SLURM_PROCID" in os.environ and "SLURM_LOCALID" in os.environ:
         os.environ["MASTER_ADDR"] = resolve_master_addr()
