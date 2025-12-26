@@ -32,6 +32,7 @@ class Unet(nn.Module):
         is_attn: Iterable[bool] = (False, False, False, False),
         mid_attn: bool = False,
         n_blocks: int = 2,
+        int8_cnn_1x1: bool = False,
     ) -> None:
         super().__init__()
         self.prob_type = None
@@ -73,6 +74,7 @@ class Unet(nn.Module):
                         activation=activation,
                         norm=norm,
                         dropout=dropout,
+                        use_int8_shortcut=int8_cnn_1x1,
                     )
                 )
                 in_channels = out_channels
@@ -90,6 +92,7 @@ class Unet(nn.Module):
             activation=activation,
             norm=norm,
             dropout=dropout,
+            use_int8_shortcut=int8_cnn_1x1,
         )
 
         # #### Second half of U-Net - increasing resolution
@@ -109,6 +112,7 @@ class Unet(nn.Module):
                         activation=activation,
                         norm=norm,
                         dropout=dropout,
+                        use_int8_shortcut=int8_cnn_1x1,
                     )
                 )
             # Final block to reduce the number of channels
@@ -121,6 +125,7 @@ class Unet(nn.Module):
                     activation=activation,
                     norm=norm,
                     dropout=dropout,
+                    use_int8_shortcut=int8_cnn_1x1,
                 )
             )
             in_channels = out_channels

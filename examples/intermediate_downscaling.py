@@ -612,9 +612,14 @@ def refresh_int8_weight_cache(model, force=False):
     """Refresh cached INT8 weights according to cache strategy."""
     if _INT8_WEIGHT_CACHE_STRATEGY == "off":
         return
-    from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
+    from climate_learn.models.hub.components.pure_int8_linear import (
+        PureInt8Conv1x1,
+        PureInt8Linear,
+    )
     for module in model.modules():
-        if isinstance(module, PureInt8Linear) and getattr(module, "int8_enabled", False):
+        if isinstance(module, (PureInt8Linear, PureInt8Conv1x1)) and getattr(
+            module, "int8_enabled", False
+        ):
             module.refresh_int8_cache(force=force)
 
 
@@ -644,7 +649,10 @@ def run_training_epochs(
     if world_rank == 0:
         print("Entering run_training_epochs...", flush=True)
 
-    from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
+    from climate_learn.models.hub.components.pure_int8_linear import (
+        PureInt8Conv1x1,
+        PureInt8Linear,
+    )
 
     for epoch in range(epoch_start, epoch_end):
         # Hybrid Training Strategy: Switch to INT8 after warm-up
@@ -659,7 +667,7 @@ def run_training_epochs(
         # We need to handle FSDP wrapped modules
         count = 0
         for module in model.modules():
-            if isinstance(module, PureInt8Linear):
+            if isinstance(module, (PureInt8Linear, PureInt8Conv1x1)):
                 module.int8_enabled = use_int8
                 count += 1
         # Refresh caches at mode switch to avoid stale weights when entering INT8
@@ -667,7 +675,10 @@ def run_training_epochs(
             refresh_int8_weight_cache(model, force=True)
         
         if world_rank == 0:
-             print(f"Updated int8_enabled={use_int8} for {count} PureInt8Linear modules.", flush=True)
+             print(
+                 f"Updated int8_enabled={use_int8} for {count} INT8 modules.",
+                 flush=True,
+             )
         
         # Activate QAT at specified epoch (if used)
         if use_qat and epoch == qat_start_epoch:
@@ -1074,6 +1085,7 @@ def main(device):
     mlp_ratio = conf["model"]["mlp_ratio"]
     drop_path = conf["model"]["drop_path"]
     drop_rate = conf["model"]["drop_rate"]
+    int8_cnn_1x1 = conf["model"].get("int8_cnn_1x1", False)
 
     data_par_size = fsdp_size * simple_ddp_size
 
@@ -1150,6 +1162,7 @@ def main(device):
         "tensor_par_size": tensor_par_size,
         "tensor_par_group": tensor_par_group,
         "FusedAttn_option": FusedAttn_option,
+        "int8_cnn_1x1": int8_cnn_1x1,
     }
 
     if world_rank == 0:

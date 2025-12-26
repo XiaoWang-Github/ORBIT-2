@@ -315,3 +315,116 @@ class PureInt8Linear(nn.Module):
 
     def extra_repr(self):
         return f'in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}, int8_enabled={self.int8_enabled}'
+
+
+class PureInt8Conv1x1(nn.Module):
+    """INT8 1x1 convolution via INT8 matmul on flattened spatial dims."""
+
+    def __init__(self, in_channels, out_channels, bias=True):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.weight = nn.Parameter(torch.empty(out_channels, in_channels, 1, 1))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(out_channels))
+        else:
+            self.register_parameter("bias", None)
+
+        self.int8_enabled = False
+        self._cached_weight_int8 = None
+        self._cached_weight_int8_t = None
+        self._cached_weight_shift = None
+        self._cached_weight_scale = None
+        self._cached_weight_version = None
+        self._input_abs_ema = None
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in)
+            nn.init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input):
+        if self.int8_enabled:
+            input_abs_override = None
+            if 0.0 < _INPUT_SCALE_EMA_ALPHA < 1.0:
+                with torch.no_grad():
+                    current_abs = input.detach().abs().max()
+                    if self._input_abs_ema is None:
+                        self._input_abs_ema = current_abs
+                    else:
+                        self._input_abs_ema = (
+                            _INPUT_SCALE_EMA_ALPHA * self._input_abs_ema
+                            + (1.0 - _INPUT_SCALE_EMA_ALPHA) * current_abs
+                        )
+                    input_abs_override = self._input_abs_ema
+
+            weight_int8, weight_int8_t, weight_shift, weight_scale = self._get_cached_weight_quant()
+            bsz, in_ch, height, width = input.shape
+            input_flat = input.permute(0, 2, 3, 1).reshape(-1, in_ch)
+            weight_2d = self.weight.view(self.out_channels, self.in_channels)
+            out_flat = PureInt8Matmul.apply(
+                input_flat,
+                weight_2d,
+                self.bias,
+                weight_int8,
+                weight_shift,
+                weight_scale,
+                weight_int8_t,
+                input_abs_override,
+            )
+            out = out_flat.reshape(bsz, height, width, self.out_channels)
+            return out.permute(0, 3, 1, 2).contiguous()
+        return F.conv2d(input, self.weight, self.bias, stride=1, padding=0)
+
+    def _get_cached_weight_quant(self):
+        current_version = self.weight._version
+        cache_disabled = _WEIGHT_CACHE_STRATEGY == "off"
+        need_refresh = (
+            cache_disabled
+            or self._cached_weight_version != current_version
+            or self._cached_weight_int8 is None
+            or self._cached_weight_int8_t is None
+            or self._cached_weight_shift is None
+            or self._cached_weight_scale is None
+        )
+        if need_refresh:
+            with torch.no_grad():
+                weight_2d = self.weight.view(self.out_channels, self.in_channels)
+                weight_abs_max = weight_2d.abs().max()
+                weight_shift, weight_scale = get_scale_shift(weight_abs_max)
+                self._cached_weight_int8 = quantize_to_int8_shifted(
+                    weight_2d, weight_scale, stochastic=False
+                )
+                self._cached_weight_int8_t = self._cached_weight_int8.t().contiguous()
+                self._cached_weight_shift = weight_shift
+                self._cached_weight_scale = weight_scale
+                self._cached_weight_version = None if cache_disabled else current_version
+        return (
+            self._cached_weight_int8,
+            self._cached_weight_int8_t,
+            self._cached_weight_shift,
+            self._cached_weight_scale,
+        )
+
+    def refresh_int8_cache(self, force: bool = False):
+        if _WEIGHT_CACHE_STRATEGY == "off":
+            self._cached_weight_version = None
+            self._cached_weight_int8 = None
+            self._cached_weight_int8_t = None
+            self._cached_weight_shift = None
+            self._cached_weight_scale = None
+            return
+        if force or _WEIGHT_CACHE_STRATEGY in ("step", "epoch"):
+            self._cached_weight_version = None
+            self._get_cached_weight_quant()
+
+    def extra_repr(self):
+        return (
+            f"in_channels={self.in_channels}, out_channels={self.out_channels}, "
+            f"bias={self.bias is not None}, int8_enabled={self.int8_enabled}"
+        )

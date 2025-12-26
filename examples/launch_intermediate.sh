@@ -119,7 +119,7 @@ export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 #python ./intermediate_downscaling.py ../configs/interm_8m_ft.yaml
 
 time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-python ./intermediate_downscaling.py ../configs/test_int8_8m.yaml
+python ./intermediate_downscaling.py ../configs/test_int8_8m_int8cnn1x1.yaml
 
 
 # stop omnistat - generate summary report and stop data collection
