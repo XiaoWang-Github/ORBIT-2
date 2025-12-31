@@ -1,8 +1,6 @@
 import torch
 from torch import nn
 
-from .pure_int8_linear import PureInt8Conv1x1
-
 
 class PeriodicPadding2D(nn.Module):
     def __init__(self, pad_width, **kwargs):
@@ -64,7 +62,6 @@ class ResidualBlock(nn.Module):
         norm: bool = False,
         dropout: float = 0.1,
         n_groups: int = 1,
-        use_int8_shortcut: bool = False,
     ):
         super().__init__()
         if activation == "gelu":
@@ -85,10 +82,7 @@ class ResidualBlock(nn.Module):
         # If the number of input channels is not equal to the number of output channels we have to
         # project the shortcut connection
         if in_channels != out_channels:
-            if use_int8_shortcut:
-                self.shortcut = PureInt8Conv1x1(in_channels, out_channels, bias=True)
-            else:
-                self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=(1, 1))
+            self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=(1, 1))
         else:
             self.shortcut = nn.Identity()
 
@@ -184,7 +178,6 @@ class DownBlock(nn.Module):
         activation: str = "leaky",
         norm: bool = False,
         dropout: float = 0.1,
-        use_int8_shortcut: bool = False,
     ):
         super().__init__()
         self.res = ResidualBlock(
@@ -193,7 +186,6 @@ class DownBlock(nn.Module):
             activation=activation,
             norm=norm,
             dropout=dropout,
-            use_int8_shortcut=use_int8_shortcut,
         )
         if has_attn:
             self.attn = AttentionBlock(out_channels)
@@ -220,7 +212,6 @@ class UpBlock(nn.Module):
         activation: str = "leaky",
         norm: bool = False,
         dropout: float = 0.1,
-        use_int8_shortcut: bool = False,
     ):
         super().__init__()
         # The input has `in_channels + out_channels` because we concatenate the output of the same resolution
@@ -231,7 +222,6 @@ class UpBlock(nn.Module):
             activation=activation,
             norm=norm,
             dropout=dropout,
-            use_int8_shortcut=use_int8_shortcut,
         )
         if has_attn:
             self.attn = AttentionBlock(out_channels)
@@ -258,7 +248,6 @@ class MiddleBlock(nn.Module):
         activation: str = "leaky",
         norm: bool = False,
         dropout: float = 0.1,
-        use_int8_shortcut: bool = False,
     ):
         super().__init__()
         self.res1 = ResidualBlock(
@@ -267,7 +256,6 @@ class MiddleBlock(nn.Module):
             activation=activation,
             norm=norm,
             dropout=dropout,
-            use_int8_shortcut=use_int8_shortcut,
         )
         self.attn = AttentionBlock(n_channels) if has_attn else nn.Identity()
         self.res2 = ResidualBlock(
@@ -276,7 +264,6 @@ class MiddleBlock(nn.Module):
             activation=activation,
             norm=norm,
             dropout=dropout,
-            use_int8_shortcut=use_int8_shortcut,
         )
 
     def forward(self, x: torch.Tensor):

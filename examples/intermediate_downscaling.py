@@ -4,6 +4,8 @@ import os
 import torch
 import functools
 import subprocess
+import json
+import shutil
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.wrap import wrap, transformer_auto_wrap_policy
 import torch.distributed as dist
@@ -67,6 +69,11 @@ def maybe_enable_rocblaslt_logging():
     if not log_level or str(log_level) == "0":
         return
     if "ROCBLASLT_LOG_FILE" in os.environ:
+        if int(os.environ.get("SLURM_PROCID", os.environ.get("RANK", "0"))) == 0:
+            print(
+                f"rocBLASLt logging enabled -> {os.environ['ROCBLASLT_LOG_FILE']}",
+                flush=True,
+            )
         return
     rank = int(os.environ.get("SLURM_PROCID", os.environ.get("RANK", "0")))
     job_id = os.environ.get("SLURM_JOB_ID", "local")
@@ -136,6 +143,113 @@ def log_gpu_memory(device, message="", world_rank=None):
         )
     else:
         print(f"{message} torch.cuda.memory_reserved: {memory_gb:.2f}GB", flush=True)
+
+
+def _quant_module_color(module, attention_types):
+    from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
+    if isinstance(module, PureInt8Linear):
+        return "palegreen"
+    if isinstance(module, attention_types):
+        return "orange"
+    if isinstance(module, (torch.nn.Linear, torch.nn.Conv2d)):
+        return "lightskyblue"
+    return "lightgray"
+
+
+def write_quant_viz_artifacts(model, out_dir):
+    """Write module graph + summary for quantization coverage."""
+    from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
+    from climate_learn.models.hub.components.attention import (
+        Attention,
+        VariableMapping_Attention,
+    )
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    attention_types = (Attention, VariableMapping_Attention)
+    summary = {
+        "int8_linear": 0,
+        "fp_linear": 0,
+        "fp_conv2d": 0,
+        "attention_blocks": 0,
+        "other_modules": 0,
+        "int8_linear_names": [],
+    }
+
+    for name, module in model.named_modules():
+        if isinstance(module, PureInt8Linear):
+            summary["int8_linear"] += 1
+            summary["int8_linear_names"].append(name)
+        elif isinstance(module, torch.nn.Linear):
+            summary["fp_linear"] += 1
+        elif isinstance(module, torch.nn.Conv2d):
+            summary["fp_conv2d"] += 1
+        elif isinstance(module, attention_types):
+            summary["attention_blocks"] += 1
+        else:
+            summary["other_modules"] += 1
+
+    summary_path = os.path.join(out_dir, "quant_summary.json")
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+
+    text_path = os.path.join(out_dir, "quant_summary.txt")
+    with open(text_path, "w", encoding="utf-8") as f:
+        f.write("Quantization coverage summary\n")
+        f.write(json.dumps(summary, indent=2))
+        f.write("\n\nNotes:\n")
+        f.write("- INT8 applies to PureInt8Linear only (QKV/proj in attention).\n")
+        f.write("- Attention softmax remains FP (functional ops inside attention).\n")
+        f.write("- Convs remain FP unless explicitly replaced.\n")
+
+    dot_lines = ["digraph QuantModules {", "rankdir=LR;", "node [shape=box];"]
+    for name, module in model.named_modules():
+        node_id = name if name else "model"
+        label = f"{node_id}\\n{module.__class__.__name__}"
+        color = _quant_module_color(module, attention_types)
+        dot_lines.append(f"\"{node_id}\" [label=\"{label}\", style=filled, fillcolor={color}];")
+
+    for name, module in model.named_modules():
+        parent_id = name if name else "model"
+        for child_name, _ in module.named_children():
+            child_id = f"{name}.{child_name}" if name else child_name
+            dot_lines.append(f"\"{parent_id}\" -> \"{child_id}\";")
+
+    dot_lines.append("}")
+    dot_path = os.path.join(out_dir, "quant_modules.dot")
+    with open(dot_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(dot_lines))
+
+    if shutil.which("dot"):
+        png_path = os.path.join(out_dir, "quant_modules.png")
+        try:
+            subprocess.run(["dot", "-Tpng", dot_path, "-o", png_path], check=True)
+        except Exception as exc:
+            print(f"Failed to render dot graph: {exc}", flush=True)
+
+
+def write_profiler_report(prof, out_dir):
+    """Write profiler table + trace + HTML summary."""
+    os.makedirs(out_dir, exist_ok=True)
+    table = prof.key_averages().table(
+        sort_by="cuda_time_total", row_limit=50
+    )
+    table_path = os.path.join(out_dir, "torch_profiler.txt")
+    with open(table_path, "w", encoding="utf-8") as f:
+        f.write(table)
+
+    trace_path = os.path.join(out_dir, "trace.json")
+    prof.export_chrome_trace(trace_path)
+
+    html_path = os.path.join(out_dir, "report.html")
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write("<html><body>\n")
+        f.write("<h2>Quantization Profiling Report</h2>\n")
+        f.write("<p>Open trace.json in chrome://tracing for timeline view.</p>\n")
+        f.write("<pre>\n")
+        f.write(table)
+        f.write("\n</pre>\n")
+        f.write("</body></html>\n")
 
 
 def get_tensor_parallel_checkpoint_path(base_path, rank, tensor_par_size):
@@ -632,14 +746,9 @@ def refresh_int8_weight_cache(model, force=False):
     """Refresh cached INT8 weights according to cache strategy."""
     if _INT8_WEIGHT_CACHE_STRATEGY == "off":
         return
-    from climate_learn.models.hub.components.pure_int8_linear import (
-        PureInt8Conv1x1,
-        PureInt8Linear,
-    )
+    from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
     for module in model.modules():
-        if isinstance(module, (PureInt8Linear, PureInt8Conv1x1)) and getattr(
-            module, "int8_enabled", False
-        ):
+        if isinstance(module, PureInt8Linear) and getattr(module, "int8_enabled", False):
             module.refresh_int8_cache(force=force)
 
 
@@ -669,10 +778,12 @@ def run_training_epochs(
     if world_rank == 0:
         print("Entering run_training_epochs...", flush=True)
 
-    from climate_learn.models.hub.components.pure_int8_linear import (
-        PureInt8Conv1x1,
-        PureInt8Linear,
-    )
+    from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear
+
+    quant_viz_enabled = os.environ.get("QUANT_VIZ", "0") == "1"
+    quant_viz_dir = os.environ.get("QUANT_VIZ_DIR", "quant_viz")
+    quant_viz_steps = int(os.environ.get("QUANT_VIZ_STEPS", "1"))
+    quant_viz_done = False
 
     for epoch in range(epoch_start, epoch_end):
         # Hybrid Training Strategy: Switch to INT8 after warm-up
@@ -687,7 +798,7 @@ def run_training_epochs(
         # We need to handle FSDP wrapped modules
         count = 0
         for module in model.modules():
-            if isinstance(module, (PureInt8Linear, PureInt8Conv1x1)):
+            if isinstance(module, PureInt8Linear):
                 module.int8_enabled = use_int8
                 count += 1
         # Refresh caches at mode switch to avoid stale weights when entering INT8
@@ -695,10 +806,7 @@ def run_training_epochs(
             refresh_int8_weight_cache(model, force=True)
         
         if world_rank == 0:
-             print(
-                 f"Updated int8_enabled={use_int8} for {count} INT8 modules.",
-                 flush=True,
-             )
+             print(f"Updated int8_enabled={use_int8} for {count} PureInt8Linear modules.", flush=True)
         
         # Activate QAT at specified epoch (if used)
         if use_qat and epoch == qat_start_epoch:
@@ -727,6 +835,14 @@ def run_training_epochs(
         profile_max_steps = int(os.environ.get("PROFILE_MAX_STEPS", "0"))
 
         for batch_idx, batch in enumerate(train_dataloader):
+            if (
+                quant_viz_enabled
+                and world_rank == 0
+                and not quant_viz_done
+                and batch_idx == 0
+            ):
+                write_quant_viz_artifacts(model, quant_viz_dir)
+
             if world_rank == 0:
                 start_event = end_event = None
                 if profile_batches:
@@ -735,34 +851,80 @@ def run_training_epochs(
                     start_event.record()
 
             try:
-                loss = training_step(
-                    batch, batch_idx, model, device, var_weights, train_loss
-                )
-                if world_rank == 0 and batch_idx == 0:
-                    # Quick heartbeat to confirm dataloader/first step is progressing
-                    print("Reached first batch forward/backward", flush=True)
-                epoch_loss += loss.detach()
+                handled_step = False
+                if (
+                    quant_viz_enabled
+                    and world_rank == 0
+                    and not quant_viz_done
+                    and batch_idx < quant_viz_steps
+                ):
+                    with torch.profiler.profile(
+                        activities=[
+                            torch.profiler.ProfilerActivity.CPU,
+                            torch.profiler.ProfilerActivity.CUDA,
+                        ],
+                        record_shapes=True,
+                        profile_memory=True,
+                    ) as prof:
+                        loss = training_step(
+                            batch, batch_idx, model, device, var_weights, train_loss
+                        )
+                        if world_rank == 0 and batch_idx == 0:
+                            print("Reached first batch forward/backward", flush=True)
+                        epoch_loss += loss.detach()
 
-                optimizer.zero_grad()
+                        optimizer.zero_grad()
 
-                if data_type == "float32":
-                    loss.backward()
-                    # Gradient Clipping
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    optimizer.step()
-                    if use_int8 and _INT8_WEIGHT_CACHE_STRATEGY == "step":
-                        refresh_int8_weight_cache(model, force=True)
+                        if data_type == "float32":
+                            loss.backward()
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                            optimizer.step()
+                            if use_int8 and _INT8_WEIGHT_CACHE_STRATEGY == "step":
+                                refresh_int8_weight_cache(model, force=True)
+                        else:
+                            scaler.scale(loss).backward()
+                            scaler.unscale_(optimizer)
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                            scaler.step(optimizer)
+                            scaler.update()
+                            if use_int8 and _INT8_WEIGHT_CACHE_STRATEGY == "step":
+                                refresh_int8_weight_cache(model, force=True)
+                            if scaler._scale < min_scale:
+                                scaler._scale = torch.tensor(min_scale).to(scaler._scale)
+
+                    write_profiler_report(prof, quant_viz_dir)
+                    quant_viz_done = True
+                    handled_step = True
                 else:
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(optimizer) # Unscale before clipping
-                    # Gradient Clipping
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    scaler.step(optimizer)
-                    scaler.update()
-                    if use_int8 and _INT8_WEIGHT_CACHE_STRATEGY == "step":
-                        refresh_int8_weight_cache(model, force=True)
-                    if scaler._scale < min_scale:
-                        scaler._scale = torch.tensor(min_scale).to(scaler._scale)
+                    loss = training_step(
+                        batch, batch_idx, model, device, var_weights, train_loss
+                    )
+                if not handled_step:
+                    if world_rank == 0 and batch_idx == 0:
+                        # Quick heartbeat to confirm dataloader/first step is progressing
+                        print("Reached first batch forward/backward", flush=True)
+                    epoch_loss += loss.detach()
+
+                    optimizer.zero_grad()
+
+                    if data_type == "float32":
+                        loss.backward()
+                        # Gradient Clipping
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        optimizer.step()
+                        if use_int8 and _INT8_WEIGHT_CACHE_STRATEGY == "step":
+                            refresh_int8_weight_cache(model, force=True)
+                    else:
+                        scaler.scale(loss).backward()
+                        scaler.unscale_(optimizer) # Unscale before clipping
+                        # Gradient Clipping
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        scaler.step(optimizer)
+                        scaler.update()
+                        if use_int8 and _INT8_WEIGHT_CACHE_STRATEGY == "step":
+                            refresh_int8_weight_cache(model, force=True)
+                        if scaler._scale < min_scale:
+                            scaler._scale = torch.tensor(min_scale).to(scaler._scale)
             except RuntimeError as e:
                 if "NaN" in str(e) or "nan" in str(e):
                     print(f"[{world_rank}] WARNING: NaN detected during training/backward. Skipping batch {batch_idx}. Error: {e}", flush=True)
@@ -1105,7 +1267,6 @@ def main(device):
     mlp_ratio = conf["model"]["mlp_ratio"]
     drop_path = conf["model"]["drop_path"]
     drop_rate = conf["model"]["drop_rate"]
-    int8_cnn_1x1 = conf["model"].get("int8_cnn_1x1", False)
 
     data_par_size = fsdp_size * simple_ddp_size
 
@@ -1182,7 +1343,6 @@ def main(device):
         "tensor_par_size": tensor_par_size,
         "tensor_par_group": tensor_par_group,
         "FusedAttn_option": FusedAttn_option,
-        "int8_cnn_1x1": int8_cnn_1x1,
     }
 
     if world_rank == 0:

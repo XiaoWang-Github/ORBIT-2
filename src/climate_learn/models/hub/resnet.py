@@ -18,7 +18,6 @@ class ResNet(nn.Module):
         norm: bool = True,
         dropout: float = 0.1,
         n_blocks: int = 2,
-        int8_cnn_1x1: bool = False,
     ) -> None:
         super().__init__()
         self.in_channels = in_channels * history
@@ -47,7 +46,6 @@ class ResNet(nn.Module):
                     activation=activation,
                     norm=True,
                     dropout=dropout,
-                    use_int8_shortcut=int8_cnn_1x1,
                 )
                 for _ in range(n_blocks)
             ]

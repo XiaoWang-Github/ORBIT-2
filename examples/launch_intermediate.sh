@@ -5,8 +5,9 @@
 #SBATCH --gres=gpu:8
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
-#SBATCH -t 06:00:00
-#SBATCH -p extended
+#SBATCH -t 01:00:00
+#SBATCH -q debug
+#SBATCH --export=ALL
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.error
 
@@ -49,14 +50,36 @@ export INT8_INPUT_SCALE_EMA=${INT8_INPUT_SCALE_EMA:-0.9}                 # EMA a
 export PROFILE_BATCH_TIME=${PROFILE_BATCH_TIME:-0}                      # set 1 for CUDA event timing every 10 batches
 export LOG_MEM_EVERY=${LOG_MEM_EVERY:-0}                                # set >0 to log reserved memory every N batches
 export PROFILE_MAX_STEPS=${PROFILE_MAX_STEPS:-0}                        # 0 means full epoch (no early stop)
+# Quantization visualization (module graph + profiler + summary)
+export QUANT_VIZ=1
+export QUANT_VIZ_STEPS=1
+export QUANT_VIZ_DIR=${QUANT_VIZ_DIR:-/lustre/orion/proj-shared/lrn036/yoonh/super-res-torchlight/examples/quant_viz}
+# INT8 softmax (LUT approximation) in attention
+export INT8_SOFTMAX=1
+export INT8_SOFTMAX_LUT_RANGE=${INT8_SOFTMAX_LUT_RANGE:-6.0}
+export INT8_SOFTMAX_LUT_SIZE=${INT8_SOFTMAX_LUT_SIZE:-512}
+export INT8_SOFTMAX_LUT_SCALE=${INT8_SOFTMAX_LUT_SCALE:-32768}
+export INT8_SOFTMAX_LOG=1
+export INT8_SOFTMAX_TRITON=${INT8_SOFTMAX_TRITON:-1}
+export INT8_ATTENTION_E2E=${INT8_ATTENTION_E2E:-1}
+export INT8_ATTENTION_E2E_LOG=${INT8_ATTENTION_E2E_LOG:-1}
+echo "INT8_SOFTMAX=$INT8_SOFTMAX LUT_RANGE=$INT8_SOFTMAX_LUT_RANGE LUT_SIZE=$INT8_SOFTMAX_LUT_SIZE LUT_SCALE=$INT8_SOFTMAX_LUT_SCALE TRITON=$INT8_SOFTMAX_TRITON"
 # DataLoader tuning to reduce I/O stalls
 export DATA_PREFETCH_FACTOR=${DATA_PREFETCH_FACTOR:-4}                  # prefetch per worker (>=2 when num_workers>0)
 export DATA_PERSISTENT_WORKERS=${DATA_PERSISTENT_WORKERS:-1}            # keep workers alive across epochs
-# rocBLASLt logging (set to 1 to trace kernel selection)
+# rocBLAS/Lt logging (set to 1 to trace kernel selection)
 export PYTORCH_ROCBLASLT_LOG_LEVEL=${PYTORCH_ROCBLASLT_LOG_LEVEL:-1}
 export ROCBLASLT_LOG_LEVEL=${ROCBLASLT_LOG_LEVEL:-1}
 export ROCBLASLT_LOG_MASK=${ROCBLASLT_LOG_MASK:-0}
 export HIPBLASLT_LOG_MASK=${HIPBLASLT_LOG_MASK:-0}
+export ROCBLASLT_LOG_DIR=${ROCBLASLT_LOG_DIR:-/lustre/orion/proj-shared/lrn036/yoonh/super-res-torchlight/examples/rocblaslt_logs}
+mkdir -p "${ROCBLASLT_LOG_DIR}"
+export ROCBLASLT_LOG_FILE=${ROCBLASLT_LOG_FILE:-${ROCBLASLT_LOG_DIR}/rocblaslt_${SLURM_JOB_ID}_rank${SLURM_PROCID}.log}
+export HIPBLASLT_LOG_FILE=${HIPBLASLT_LOG_FILE:-${ROCBLASLT_LOG_DIR}/hipblaslt_${SLURM_JOB_ID}_rank${SLURM_PROCID}.log}
+# Fallback: if rocBLAS (non-Lt) is used, capture its log too.
+export ROCBLAS_LOG_LEVEL=${ROCBLAS_LOG_LEVEL:-1}
+export ROCBLAS_LOG_MASK=${ROCBLAS_LOG_MASK:-0}
+export ROCBLAS_LOG_FILE=${ROCBLAS_LOG_FILE:-${ROCBLASLT_LOG_DIR}/rocblas_${SLURM_JOB_ID}_rank${SLURM_PROCID}.log}
 
 #source activate /lustre/orion/lrn036/world-shared/xf9/torch27-rocm63
 #conda activate /lustre/orion/lrn036/world-shared/xf9/torch26
@@ -119,7 +142,7 @@ export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
 #python ./intermediate_downscaling.py ../configs/interm_8m_ft.yaml
 
 time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-python ./intermediate_downscaling.py ../configs/test_int8_8m_int8cnn1x1.yaml
+python ./intermediate_downscaling.py ../configs/test_int8_8m.yaml
 
 
 # stop omnistat - generate summary report and stop data collection

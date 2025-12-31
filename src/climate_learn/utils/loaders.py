@@ -256,7 +256,7 @@ load_downscaling_module = partial(
 )
 
 
-def load_architecture(task, data_module, architecture, default_vars, superres_mag=4,cnn_ratio=4, patch_size=2,embed_dim=256,depth=6,decoder_depth=1,num_heads=4,mlp_ratio=4,drop_path=0.1,drop_rate=0.1, tensor_par_size = 1, tensor_par_group = None,FusedAttn_option = FusedAttn.CK, int8_cnn_1x1: bool = False ):
+def load_architecture(task, data_module, architecture, default_vars, superres_mag=4,cnn_ratio=4, patch_size=2,embed_dim=256,depth=6,decoder_depth=1,num_heads=4,mlp_ratio=4,drop_path=0.1,drop_rate=0.1, tensor_par_size = 1, tensor_par_group = None,FusedAttn_option = FusedAttn.CK ):
     in_vars, out_vars = get_data_variables(data_module)
     in_shape, out_shape = get_data_dims(data_module)
 
@@ -302,7 +302,6 @@ def load_architecture(task, data_module, architecture, default_vars, superres_ma
                 norm=True,
                 dropout=0.1,
                 n_blocks=19,
-                int8_cnn_1x1=int8_cnn_1x1,
             )
             optimizer = load_optimizer(
                 model, "Adam", {"lr": 1e-5, "weight_decay": 1e-5}

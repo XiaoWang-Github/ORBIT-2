@@ -1,6 +1,6 @@
 #-----------   TRAINER -------------
 trainer:
-  max_epochs: 50 # Increased for INT8 testing
+  max_epochs: 5 # Short run for LUT softmax comparison
   checkpoint: 
   pretrain:
   batch_size: 32
