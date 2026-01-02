@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
 #SBATCH -t 01:00:00
-#SBATCH -q debug
+#SBATCH -p extended
 #SBATCH --export=ALL
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.error
@@ -46,6 +46,11 @@ export ATTENTION_DEBUG=${ATTENTION_DEBUG:-0}                 # set 1 to enable N
 export INT8_DISABLE_STOCHASTIC_ROUND=${INT8_DISABLE_STOCHASTIC_ROUND:-1} # default off for perf; set 0 to keep stochastic rounding
 export INT8_WEIGHT_CACHE_STRATEGY=${INT8_WEIGHT_CACHE_STRATEGY:-epoch}   # default to epoch cache for stability (off|step|epoch)
 export INT8_INPUT_SCALE_EMA=${INT8_INPUT_SCALE_EMA:-0.9}                 # EMA alpha for input absmax (0 disables)
+export INT8_INPUT_SCALE_UPDATE_EVERY=${INT8_INPUT_SCALE_UPDATE_EVERY:-10} # update EMA every N steps (>=1)
+export INT8_INPUT_SCALE_FREEZE_AFTER=${INT8_INPUT_SCALE_FREEZE_AFTER:-0}  # freeze EMA after N updates (0 disables)
+export INT8_INPUT_SCALE_SAMPLE_STRIDE=${INT8_INPUT_SCALE_SAMPLE_STRIDE:-1} # sample stride for absmax (1 disables)
+export INT8_OUTPUT_SCALE_SAMPLE_STRIDE=${INT8_OUTPUT_SCALE_SAMPLE_STRIDE:-1} # sample stride for output absmax (1 disables)
+export INT8_OUTPUT_REQUANT_METHOD=${INT8_OUTPUT_REQUANT_METHOD:-auto} # auto|direct (direct skips output absmax)
 # Optional lightweight timing/logging
 export PROFILE_BATCH_TIME=${PROFILE_BATCH_TIME:-0}                      # set 1 for CUDA event timing every 10 batches
 export LOG_MEM_EVERY=${LOG_MEM_EVERY:-0}                                # set >0 to log reserved memory every N batches
@@ -61,9 +66,15 @@ export INT8_SOFTMAX_LUT_SIZE=${INT8_SOFTMAX_LUT_SIZE:-512}
 export INT8_SOFTMAX_LUT_SCALE=${INT8_SOFTMAX_LUT_SCALE:-32768}
 export INT8_SOFTMAX_LOG=1
 export INT8_SOFTMAX_TRITON=${INT8_SOFTMAX_TRITON:-1}
+export INT8_SOFTMAX_OUTPUT_INT8=${INT8_SOFTMAX_OUTPUT_INT8:-1}
+export INT8_SOFTMAX_OUTPUT_SCALE=${INT8_SOFTMAX_OUTPUT_SCALE:-127.0}
+export INT8_SOFTMAX_OUTPUT_TRITON=${INT8_SOFTMAX_OUTPUT_TRITON:-1}
 export INT8_ATTENTION_E2E=${INT8_ATTENTION_E2E:-1}
 export INT8_ATTENTION_E2E_LOG=${INT8_ATTENTION_E2E_LOG:-1}
-echo "INT8_SOFTMAX=$INT8_SOFTMAX LUT_RANGE=$INT8_SOFTMAX_LUT_RANGE LUT_SIZE=$INT8_SOFTMAX_LUT_SIZE LUT_SCALE=$INT8_SOFTMAX_LUT_SCALE TRITON=$INT8_SOFTMAX_TRITON"
+export INT8_ATTENTION_AV_TRITON=${INT8_ATTENTION_AV_TRITON:-1}
+export INT8_ATTENTION_TIMING=${INT8_ATTENTION_TIMING:-0}
+export INT8_ATTENTION_TIMING_EVERY=${INT8_ATTENTION_TIMING_EVERY:-50}
+echo "INT8_SOFTMAX=$INT8_SOFTMAX LUT_RANGE=$INT8_SOFTMAX_LUT_RANGE LUT_SIZE=$INT8_SOFTMAX_LUT_SIZE LUT_SCALE=$INT8_SOFTMAX_LUT_SCALE TRITON=$INT8_SOFTMAX_TRITON OUT_INT8=$INT8_SOFTMAX_OUTPUT_INT8 OUT_SCALE=$INT8_SOFTMAX_OUTPUT_SCALE OUT_TRITON=$INT8_SOFTMAX_OUTPUT_TRITON"
 # DataLoader tuning to reduce I/O stalls
 export DATA_PREFETCH_FACTOR=${DATA_PREFETCH_FACTOR:-4}                  # prefetch per worker (>=2 when num_workers>0)
 export DATA_PERSISTENT_WORKERS=${DATA_PERSISTENT_WORKERS:-1}            # keep workers alive across epochs

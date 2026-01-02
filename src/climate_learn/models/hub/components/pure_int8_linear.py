@@ -11,6 +11,11 @@ _int_mm = torch.ops.aten._int_mm
 _DISABLE_STOCHASTIC_ROUNDING = os.environ.get("INT8_DISABLE_STOCHASTIC_ROUND", "0") == "1"
 _WEIGHT_CACHE_STRATEGY = os.environ.get("INT8_WEIGHT_CACHE_STRATEGY", "step")  # step|epoch|off
 _INPUT_SCALE_EMA_ALPHA = float(os.environ.get("INT8_INPUT_SCALE_EMA", "0"))
+_INPUT_SCALE_UPDATE_EVERY = int(os.environ.get("INT8_INPUT_SCALE_UPDATE_EVERY", "1"))
+_INPUT_SCALE_FREEZE_AFTER = int(os.environ.get("INT8_INPUT_SCALE_FREEZE_AFTER", "0"))
+_INPUT_SCALE_SAMPLE_STRIDE = int(os.environ.get("INT8_INPUT_SCALE_SAMPLE_STRIDE", "1"))
+_OUTPUT_SCALE_SAMPLE_STRIDE = int(os.environ.get("INT8_OUTPUT_SCALE_SAMPLE_STRIDE", "1"))
+_OUTPUT_REQUANT_METHOD = os.environ.get("INT8_OUTPUT_REQUANT_METHOD", "auto").lower()
 _INT8_OUTPUT_DTYPE = torch.bfloat16
 
 
@@ -29,7 +34,15 @@ class QuantizedTensor:
 
 def quantize_activation_to_int8(tensor_fp32):
     """Quantize activation to int8 and return (int8, scale_factor)."""
-    abs_max = tensor_fp32.abs().max()
+    sample_stride = max(_OUTPUT_SCALE_SAMPLE_STRIDE, 1)
+    if sample_stride > 1:
+        flat = tensor_fp32.reshape(-1)
+        sampled = flat[::sample_stride]
+        if sampled.numel() == 0:
+            sampled = flat
+        abs_max = sampled.abs().max()
+    else:
+        abs_max = tensor_fp32.abs().max()
     shift, scale = get_scale_shift(abs_max)
     int8 = quantize_to_int8_shifted(tensor_fp32, scale, stochastic=False)
     return QuantizedTensor(int8=int8, scale=scale)
@@ -247,6 +260,7 @@ class PureInt8Linear(nn.Module):
         self._cached_weight_version = None
         # Optional EMA for input abs max
         self._input_abs_ema = None
+        self._input_abs_step = 0
 
         self.reset_parameters()
 
@@ -262,16 +276,7 @@ class PureInt8Linear(nn.Module):
         if self.int8_enabled:
             input_abs_override = None
             if 0.0 < _INPUT_SCALE_EMA_ALPHA < 1.0:
-                with torch.no_grad():
-                    current_abs = input.detach().abs().max()
-                    if self._input_abs_ema is None:
-                        self._input_abs_ema = current_abs
-                    else:
-                        self._input_abs_ema = (
-                            _INPUT_SCALE_EMA_ALPHA * self._input_abs_ema
-                            + (1.0 - _INPUT_SCALE_EMA_ALPHA) * current_abs
-                        )
-                    input_abs_override = self._input_abs_ema
+                input_abs_override = self._maybe_update_input_abs(input)
             # PureInt8Matmul will handle the quantization internally
             weight_int8, weight_int8_t, weight_shift, weight_scale = self._get_cached_weight_quant()
             return PureInt8Matmul.apply(
@@ -293,16 +298,7 @@ class PureInt8Linear(nn.Module):
         if self.int8_enabled:
             input_abs_override = None
             if 0.0 < _INPUT_SCALE_EMA_ALPHA < 1.0:
-                with torch.no_grad():
-                    current_abs = input.detach().abs().max()
-                    if self._input_abs_ema is None:
-                        self._input_abs_ema = current_abs
-                    else:
-                        self._input_abs_ema = (
-                            _INPUT_SCALE_EMA_ALPHA * self._input_abs_ema
-                            + (1.0 - _INPUT_SCALE_EMA_ALPHA) * current_abs
-                        )
-                    input_abs_override = self._input_abs_ema
+                input_abs_override = self._maybe_update_input_abs(input)
             input_abs_max = input.abs().max() if input_abs_override is None else input_abs_override
             _, input_scale = get_scale_shift(input_abs_max)
             input_int8 = quantize_to_int8_shifted(input, input_scale, stochastic=False)
@@ -318,6 +314,11 @@ class PureInt8Linear(nn.Module):
             output_int32 = output_int32_flat.reshape(output_shape)
 
             output_scale = input_scale * weight_scale
+            if self.bias is None and _OUTPUT_REQUANT_METHOD == "direct":
+                output_int8 = torch.clamp(
+                    torch.round(output_int32.to(torch.float32) / output_scale), -127, 127
+                ).to(torch.int8)
+                return QuantizedTensor(int8=output_int8, scale=output_scale)
             output_fp = output_int32.to(torch.float32) / output_scale
             if self.bias is not None:
                 output_fp += self.bias
@@ -328,6 +329,42 @@ class PureInt8Linear(nn.Module):
         # FP path: quantize output for consistency
         output_fp = F.linear(input, self.weight, self.bias)
         return quantize_activation_to_int8(output_fp)
+
+    def _maybe_update_input_abs(self, input: torch.Tensor):
+        """Update input abs max EMA at a reduced frequency to cut overhead."""
+        with torch.no_grad():
+            sample_stride = max(_INPUT_SCALE_SAMPLE_STRIDE, 1)
+            if sample_stride > 1:
+                flat = input.detach().reshape(-1)
+                sampled = flat[::sample_stride]
+                if sampled.numel() == 0:
+                    sampled = flat
+                current_abs = sampled.abs().max()
+            else:
+                current_abs = input.detach().abs().max()
+            if self._input_abs_ema is None:
+                # Initialize once so input_abs_override is always available.
+                self._input_abs_ema = current_abs
+                return self._input_abs_ema
+        self._input_abs_step += 1
+        if _INPUT_SCALE_FREEZE_AFTER > 0 and self._input_abs_step >= _INPUT_SCALE_FREEZE_AFTER:
+            return self._input_abs_ema
+        if _INPUT_SCALE_UPDATE_EVERY <= 1 or self._input_abs_step % _INPUT_SCALE_UPDATE_EVERY == 0:
+            with torch.no_grad():
+                sample_stride = max(_INPUT_SCALE_SAMPLE_STRIDE, 1)
+                if sample_stride > 1:
+                    flat = input.detach().reshape(-1)
+                    sampled = flat[::sample_stride]
+                    if sampled.numel() == 0:
+                        sampled = flat
+                    current_abs = sampled.abs().max()
+                else:
+                    current_abs = input.detach().abs().max()
+                self._input_abs_ema = (
+                    _INPUT_SCALE_EMA_ALPHA * self._input_abs_ema
+                    + (1.0 - _INPUT_SCALE_EMA_ALPHA) * current_abs
+                )
+        return self._input_abs_ema
 
     def _get_cached_weight_quant(self):
         """Quantize weight once per weight version to reduce overhead."""

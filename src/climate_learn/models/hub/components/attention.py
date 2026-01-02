@@ -20,6 +20,9 @@ _INT8_SOFTMAX_LUT_SIZE = int(os.environ.get("INT8_SOFTMAX_LUT_SIZE", "256"))
 _INT8_SOFTMAX_LUT_SCALE = int(os.environ.get("INT8_SOFTMAX_LUT_SCALE", "32768"))
 _INT8_SOFTMAX_LOG = os.environ.get("INT8_SOFTMAX_LOG", "1") == "1"
 _INT8_SOFTMAX_TRITON = os.environ.get("INT8_SOFTMAX_TRITON", "0") == "1"
+_INT8_SOFTMAX_OUTPUT_INT8 = os.environ.get("INT8_SOFTMAX_OUTPUT_INT8", "0") == "1"
+_INT8_SOFTMAX_OUTPUT_SCALE = float(os.environ.get("INT8_SOFTMAX_OUTPUT_SCALE", "127.0"))
+_INT8_SOFTMAX_OUTPUT_TRITON = os.environ.get("INT8_SOFTMAX_OUTPUT_TRITON", "1") == "1"
 _INT8_ATTENTION_E2E = os.environ.get("INT8_ATTENTION_E2E", "0") == "1"
 _INT8_ATTENTION_E2E_TRITON = os.environ.get("INT8_ATTENTION_E2E_TRITON", "1") == "1"
 _INT8_ATTENTION_E2E_LOG = os.environ.get("INT8_ATTENTION_E2E_LOG", "1") == "1"
@@ -27,11 +30,18 @@ _INT8_ATTENTION_LOGITS_DTYPE = os.environ.get("INT8_ATTENTION_LOGITS_DTYPE", "fp
 _INT8_ATTENTION_LOGITS_TORCH_DTYPE = (
     torch.bfloat16 if _INT8_ATTENTION_LOGITS_DTYPE == "bf16" else torch.float32
 )
+_INT8_ATTENTION_AV_TRITON = os.environ.get("INT8_ATTENTION_AV_TRITON", "1") == "1"
+_INT8_ATTENTION_TIMING = os.environ.get("INT8_ATTENTION_TIMING", "0") == "1"
+_INT8_ATTENTION_TIMING_EVERY = int(os.environ.get("INT8_ATTENTION_TIMING_EVERY", "50"))
 _EXP_LUT_CACHE = {}
 _INT8_SOFTMAX_LOGGED = False
 _INT8_SOFTMAX_TRITON_LOGGED = False
+_INT8_SOFTMAX_OUTPUT_TRITON_LOGGED = False
 _INT8_ATTENTION_E2E_LOGGED = False
 _INT8_ATTENTION_E2E_TRITON_LOGGED = False
+_INT8_SOFTMAX_OUTPUT_INT8_LOGGED = False
+_INT8_ATTENTION_AV_TRITON_LOGGED = False
+_INT8_ATTENTION_TIMING_COUNT = 0
 
 def debug_print(*args, **kwargs):
     if not _ATTENTION_DEBUG_ENABLED:
@@ -86,9 +96,32 @@ def int8_softmax_lut(logits: torch.Tensor) -> torch.Tensor:
         _INT8_SOFTMAX_LOGGED = True
     if _INT8_SOFTMAX_TRITON and logits.is_cuda:
         global _INT8_SOFTMAX_TRITON_LOGGED
+        global _INT8_SOFTMAX_OUTPUT_TRITON_LOGGED
         try:
             from climate_learn.models.hub.components import triton_ops
             lut = _get_exp_lut(logits.device)
+            if _INT8_SOFTMAX_OUTPUT_INT8 and _INT8_SOFTMAX_OUTPUT_TRITON:
+                if _INT8_SOFTMAX_LOG and not _INT8_SOFTMAX_OUTPUT_TRITON_LOGGED:
+                    rank = 0
+                    if dist.is_initialized():
+                        rank = dist.get_rank()
+                    if rank == 0:
+                        print("INT8_SOFTMAX using Triton LUT kernel (int8 output)", flush=True)
+                    _INT8_SOFTMAX_OUTPUT_TRITON_LOGGED = True
+                if logits.dim() != 2:
+                    flat = logits.reshape(-1, logits.shape[-1])
+                    out_int8 = triton_ops.triton_lut_softmax_int8(
+                        flat, lut, _INT8_SOFTMAX_LUT_RANGE, _INT8_SOFTMAX_LUT_SIZE, _INT8_SOFTMAX_OUTPUT_SCALE
+                    )
+                    out_int8 = out_int8.reshape(logits.shape)
+                else:
+                    out_int8 = triton_ops.triton_lut_softmax_int8(
+                        logits, lut, _INT8_SOFTMAX_LUT_RANGE, _INT8_SOFTMAX_LUT_SIZE, _INT8_SOFTMAX_OUTPUT_SCALE
+                    )
+                scale = torch.tensor(
+                    _INT8_SOFTMAX_OUTPUT_SCALE, device=logits.device, dtype=torch.float32
+                )
+                return QuantizedTensor(int8=out_int8, scale=scale)
             if _INT8_SOFTMAX_LOG and not _INT8_SOFTMAX_TRITON_LOGGED:
                 rank = 0
                 if dist.is_initialized():
@@ -108,7 +141,8 @@ def int8_softmax_lut(logits: torch.Tensor) -> torch.Tensor:
                     print(f"INT8_SOFTMAX Triton fallback: {exc}", flush=True)
                 _INT8_SOFTMAX_TRITON_LOGGED = True
     if _INT8_SOFTMAX_LUT_SIZE <= 1:
-        return logits.softmax(dim=-1)
+        probs = logits.softmax(dim=-1)
+        return _maybe_quantize_softmax_output(probs)
     max_logits = logits.max(dim=-1, keepdim=True).values
     shifted = logits - max_logits
     shifted = torch.clamp(shifted, -_INT8_SOFTMAX_LUT_RANGE, 0.0)
@@ -119,7 +153,72 @@ def int8_softmax_lut(logits: torch.Tensor) -> torch.Tensor:
     exp_int = lut[idx]
     sum_int = exp_int.sum(dim=-1, keepdim=True).clamp_min(1)
     probs = exp_int.float() / sum_int.float()
-    return probs.to(logits.dtype)
+    return _maybe_quantize_softmax_output(probs.to(logits.dtype))
+
+
+def _maybe_quantize_softmax_output(probs: torch.Tensor):
+    global _INT8_SOFTMAX_OUTPUT_INT8_LOGGED
+    if not _INT8_SOFTMAX_OUTPUT_INT8:
+        return probs
+    if _INT8_SOFTMAX_LOG and not _INT8_SOFTMAX_OUTPUT_INT8_LOGGED:
+        rank = 0
+        if dist.is_initialized():
+            rank = dist.get_rank()
+        if rank == 0:
+            print(
+                f"INT8_SOFTMAX output int8 active: scale={_INT8_SOFTMAX_OUTPUT_SCALE}",
+                flush=True,
+            )
+        _INT8_SOFTMAX_OUTPUT_INT8_LOGGED = True
+    scale = torch.tensor(_INT8_SOFTMAX_OUTPUT_SCALE, device=probs.device, dtype=probs.dtype)
+    int8 = torch.clamp(torch.round(probs * scale), -127, 127).to(torch.int8)
+    return QuantizedTensor(int8=int8, scale=scale)
+
+
+def _dequant_softmax_if_needed(attn, out_dtype: torch.dtype):
+    if isinstance(attn, QuantizedTensor):
+        return attn.int8.to(out_dtype) / attn.scale.to(out_dtype)
+    return attn
+
+
+def _int8_bmm_av(attn_qt: QuantizedTensor, v_int8: torch.Tensor) -> torch.Tensor:
+    global _INT8_ATTENTION_AV_TRITON_LOGGED
+    if _INT8_ATTENTION_AV_TRITON and v_int8.is_cuda:
+        try:
+            from climate_learn.models.hub.components import triton_ops
+            if _INT8_ATTENTION_E2E_LOG and not _INT8_ATTENTION_AV_TRITON_LOGGED:
+                rank = 0
+                if dist.is_initialized():
+                    rank = dist.get_rank()
+                if rank == 0:
+                    print("INT8_ATTENTION_E2E using Triton AV kernel", flush=True)
+                _INT8_ATTENTION_AV_TRITON_LOGGED = True
+            return triton_ops.triton_int8_bmm_av(attn_qt.int8, v_int8)
+        except Exception as exc:
+            if _INT8_ATTENTION_E2E_LOG and not _INT8_ATTENTION_AV_TRITON_LOGGED:
+                rank = 0
+                if dist.is_initialized():
+                    rank = dist.get_rank()
+                if rank == 0:
+                    print(f"INT8_ATTENTION_E2E AV Triton fallback: {exc}", flush=True)
+                _INT8_ATTENTION_AV_TRITON_LOGGED = True
+    return None
+
+
+def _maybe_log_timing(tag: str, timings_ms: dict):
+    global _INT8_ATTENTION_TIMING_COUNT
+    if not _INT8_ATTENTION_TIMING:
+        return
+    _INT8_ATTENTION_TIMING_COUNT += 1
+    if _INT8_ATTENTION_TIMING_COUNT % _INT8_ATTENTION_TIMING_EVERY != 0:
+        return
+    rank = 0
+    if dist.is_initialized():
+        rank = dist.get_rank()
+    if rank != 0:
+        return
+    parts = [f"{k}={v:.3f}ms" for k, v in timings_ms.items()]
+    print(f"{tag} timing: " + " ".join(parts), flush=True)
 
 
 def _int8_bmm_qk(q_int8: torch.Tensor, k_int8: torch.Tensor) -> torch.Tensor:
@@ -233,6 +332,9 @@ class Attention(nn.Module):
             and self.fused_attn == FusedAttn.NONE
             and self.qkv.int8_enabled
         )
+        timing_events = None
+        if _INT8_ATTENTION_TIMING and x.is_cuda:
+            timing_events = {}
 
         if self.tensor_par_size>1:
             x= F_Identity_B_AllReduce(x, group=self.tensor_par_group)
@@ -273,20 +375,62 @@ class Attention(nn.Module):
             else: # FusedAttn.NONE
                 if _INT8_ATTENTION_E2E and self.qkv.int8_enabled:
                     _maybe_log_e2e_int8()
+                    if timing_events is not None:
+                        s = torch.cuda.Event(enable_timing=True)
+                        e = torch.cuda.Event(enable_timing=True)
+                        s.record()
                     qkv_qt = self.qkv.forward_int8(x)
+                    if timing_events is not None:
+                        e.record()
+                        timing_events["qkv_int8"] = (s, e)
                     if not isinstance(qkv_qt, QuantizedTensor):
                         raise RuntimeError("Expected QuantizedTensor from forward_int8")
                     qkv_int8 = qkv_qt.int8.reshape(
                         B, N, 3, self.num_heads // self.tensor_par_size, self.head_dim
                     ).permute(2, 0, 3, 1, 4)
                     q_int8, k_int8, v_int8 = qkv_int8.unbind(0)
+                    if timing_events is not None:
+                        s = torch.cuda.Event(enable_timing=True)
+                        e = torch.cuda.Event(enable_timing=True)
+                        s.record()
                     logits_int32 = _int8_bmm_qk(q_int8, k_int8)
+                    if timing_events is not None:
+                        e.record()
+                        timing_events["qk_int8"] = (s, e)
                     scale_qk = qkv_qt.scale * qkv_qt.scale
                     logits_scaled = logits_int32.to(_INT8_ATTENTION_LOGITS_TORCH_DTYPE) / scale_qk.to(_INT8_ATTENTION_LOGITS_TORCH_DTYPE)
+                    if timing_events is not None:
+                        s = torch.cuda.Event(enable_timing=True)
+                        e = torch.cuda.Event(enable_timing=True)
+                        s.record()
                     attn = int8_softmax_lut(logits_scaled) if _INT8_SOFTMAX_ENABLED else logits_scaled.softmax(dim=-1)
-                    attn = self.attn_drop(attn).to(out_dtype)
-                    v_fp = v_int8.to(out_dtype) / qkv_qt.scale.to(out_dtype)
-                    attn_output = attn @ v_fp
+                    if timing_events is not None:
+                        e.record()
+                        timing_events["softmax"] = (s, e)
+                    if isinstance(attn, QuantizedTensor):
+                        if timing_events is not None:
+                            s = torch.cuda.Event(enable_timing=True)
+                            e = torch.cuda.Event(enable_timing=True)
+                            s.record()
+                        attn_int32 = _int8_bmm_av(attn, v_int8)
+                        if timing_events is not None:
+                            e.record()
+                            timing_events["av_int8"] = (s, e)
+                        if attn_int32 is None:
+                            attn = _dequant_softmax_if_needed(attn, out_dtype)
+                            attn = self.attn_drop(attn).to(out_dtype)
+                            v_fp = v_int8.to(out_dtype) / qkv_qt.scale.to(out_dtype)
+                            attn_output = attn @ v_fp
+                        else:
+                            attn_scale = attn.scale.to(torch.float32)
+                            v_scale = qkv_qt.scale.to(torch.float32)
+                            attn_output = attn_int32.to(torch.float32) / (attn_scale * v_scale)
+                            attn_output = attn_output.to(out_dtype)
+                    else:
+                        attn = _dequant_softmax_if_needed(attn, out_dtype)
+                        attn = self.attn_drop(attn).to(out_dtype)
+                        v_fp = v_int8.to(out_dtype) / qkv_qt.scale.to(out_dtype)
+                        attn_output = attn @ v_fp
                     attn_output = attn_output.to(out_dtype).transpose(1, 2)
                 else:
                     q = q * self.scale
@@ -295,6 +439,7 @@ class Attention(nn.Module):
                         attn = int8_softmax_lut(attn)
                     else:
                         attn = attn.softmax(dim=-1)
+                    attn = _dequant_softmax_if_needed(attn, out_dtype)
                     attn_output = self.attn_drop(attn) @ v
                     attn_output = attn_output.transpose(1, 2)
             
@@ -305,12 +450,24 @@ class Attention(nn.Module):
             raise e
 
         try:
+            if timing_events is not None:
+                s = torch.cuda.Event(enable_timing=True)
+                e = torch.cuda.Event(enable_timing=True)
+                s.record()
             x = self.proj(x)
             x = self.proj_drop(x)
+            if timing_events is not None:
+                e.record()
+                timing_events["proj"] = (s, e)
             debug_tensor("Attention.forward: After proj (PureInt8Linear) x", x)
         except Exception as e:
             debug_print(f"CRITICAL ERROR in Attention proj: {e}", all_ranks=True)
             raise e
+
+        if timing_events is not None:
+            torch.cuda.synchronize()
+            timings_ms = {k: s.elapsed_time(e) for k, (s, e) in timing_events.items()}
+            _maybe_log_timing("Attention", timings_ms)
 
         if self.tensor_par_size >1:
             dist.all_reduce(x, op=dist.ReduceOp.SUM, group=self.tensor_par_group)
@@ -364,6 +521,9 @@ class VariableMapping_Attention(nn.Module):
             and self.q.int8_enabled
             and self.kv.int8_enabled
         )
+        timing_events = None
+        if _INT8_ATTENTION_TIMING and x.is_cuda:
+            timing_events = {}
         if self.tensor_par_size >1:
             var_query= F_Identity_B_AllReduce_VariableMapping(var_query, group=self.tensor_par_group)
             x= F_Identity_B_AllReduce_VariableMapping(x, group=self.tensor_par_group)
@@ -403,8 +563,15 @@ class VariableMapping_Attention(nn.Module):
             else: # FusedAttn.NONE
                 if _INT8_ATTENTION_E2E and self.q.int8_enabled and self.kv.int8_enabled:
                     _maybe_log_e2e_int8()
+                    if timing_events is not None:
+                        s = torch.cuda.Event(enable_timing=True)
+                        e = torch.cuda.Event(enable_timing=True)
+                        s.record()
                     q_qt = self.q.forward_int8(var_query)
                     kv_qt = self.kv.forward_int8(x)
+                    if timing_events is not None:
+                        e.record()
+                        timing_events["qkv_int8"] = (s, e)
                     if not isinstance(q_qt, QuantizedTensor) or not isinstance(kv_qt, QuantizedTensor):
                         raise RuntimeError("Expected QuantizedTensor from forward_int8")
                     q_int8 = q_qt.int8.reshape(
@@ -414,13 +581,48 @@ class VariableMapping_Attention(nn.Module):
                         B, N_i, 2, self.num_heads // self.tensor_par_size, self.head_dim
                     ).permute(2, 0, 3, 1, 4)
                     k_int8, v_int8 = kv_int8.unbind(0)
+                    if timing_events is not None:
+                        s = torch.cuda.Event(enable_timing=True)
+                        e = torch.cuda.Event(enable_timing=True)
+                        s.record()
                     logits_int32 = _int8_bmm_qk(q_int8, k_int8)
+                    if timing_events is not None:
+                        e.record()
+                        timing_events["qk_int8"] = (s, e)
                     scale_qk = q_qt.scale * kv_qt.scale
                     logits_scaled = logits_int32.to(_INT8_ATTENTION_LOGITS_TORCH_DTYPE) / scale_qk.to(_INT8_ATTENTION_LOGITS_TORCH_DTYPE)
+                    if timing_events is not None:
+                        s = torch.cuda.Event(enable_timing=True)
+                        e = torch.cuda.Event(enable_timing=True)
+                        s.record()
                     attn = int8_softmax_lut(logits_scaled) if _INT8_SOFTMAX_ENABLED else logits_scaled.softmax(dim=-1)
-                    attn = self.attn_drop(attn).to(out_dtype)
-                    v_fp = v_int8.to(out_dtype) / kv_qt.scale.to(out_dtype)
-                    x = attn @ v_fp
+                    if timing_events is not None:
+                        e.record()
+                        timing_events["softmax"] = (s, e)
+                    if isinstance(attn, QuantizedTensor):
+                        if timing_events is not None:
+                            s = torch.cuda.Event(enable_timing=True)
+                            e = torch.cuda.Event(enable_timing=True)
+                            s.record()
+                        attn_int32 = _int8_bmm_av(attn, v_int8)
+                        if timing_events is not None:
+                            e.record()
+                            timing_events["av_int8"] = (s, e)
+                        if attn_int32 is None:
+                            attn = _dequant_softmax_if_needed(attn, out_dtype)
+                            attn = self.attn_drop(attn).to(out_dtype)
+                            v_fp = v_int8.to(out_dtype) / kv_qt.scale.to(out_dtype)
+                            x = attn @ v_fp
+                        else:
+                            attn_scale = attn.scale.to(torch.float32)
+                            v_scale = kv_qt.scale.to(torch.float32)
+                            x = attn_int32.to(torch.float32) / (attn_scale * v_scale)
+                            x = x.to(out_dtype)
+                    else:
+                        attn = _dequant_softmax_if_needed(attn, out_dtype)
+                        attn = self.attn_drop(attn).to(out_dtype)
+                        v_fp = v_int8.to(out_dtype) / kv_qt.scale.to(out_dtype)
+                        x = attn @ v_fp
                     x = x.to(out_dtype).transpose(1, 2)
                 else:
                     q = q * self.scale
@@ -429,6 +631,7 @@ class VariableMapping_Attention(nn.Module):
                         attn = int8_softmax_lut(attn)
                     else:
                         attn = attn.softmax(dim=-1)
+                    attn = _dequant_softmax_if_needed(attn, out_dtype)
                     attn = self.attn_drop(attn)
                     x = attn @ v
                     x = x.transpose(1, 2)
@@ -439,12 +642,24 @@ class VariableMapping_Attention(nn.Module):
         x = x.reshape(B, N_a, C//self.tensor_par_size)
         
         try:
+            if timing_events is not None:
+                s = torch.cuda.Event(enable_timing=True)
+                e = torch.cuda.Event(enable_timing=True)
+                s.record()
             x = self.proj(x)
             debug_tensor("VariableMapping_Attention.forward: After proj", x)
             x = self.proj_drop(x)
+            if timing_events is not None:
+                e.record()
+                timing_events["proj"] = (s, e)
         except Exception as e:
             debug_print(f"CRITICAL ERROR in VariableMapping_Attention proj: {e}", all_ranks=True)
             raise e
+
+        if timing_events is not None:
+            torch.cuda.synchronize()
+            timings_ms = {k: s.elapsed_time(e) for k, (s, e) in timing_events.items()}
+            _maybe_log_timing("VarAttention", timings_ms)
 
         if self.tensor_par_size >1:
             dist.all_reduce(x, op=dist.ReduceOp.SUM, group=self.tensor_par_group)

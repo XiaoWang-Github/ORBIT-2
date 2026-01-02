@@ -250,6 +250,94 @@ def triton_int8_bmm_qk(q, k):
     return out.reshape(bsz, nheads, n_q, n_k)
 
 
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'BLOCK_K': 64}, num_stages=3, num_warps=4),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'BLOCK_K': 32}, num_stages=4, num_warps=4),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 128, 'BLOCK_K': 32}, num_stages=4, num_warps=4),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 128, 'BLOCK_K': 32}, num_stages=4, num_warps=2),
+    ],
+    key=['NQ', 'D', 'NK'],
+)
+@triton.jit
+def int8_av_bmm_kernel(
+    a_ptr, v_ptr, out_ptr,
+    stride_ab, stride_am, stride_ak,
+    stride_vb, stride_vk, stride_vn,
+    stride_ob, stride_om, stride_on,
+    NQ, D, NK,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+):
+    pid_b = tl.program_id(axis=0)
+    pid_mn = tl.program_id(axis=1)
+    grid_n = tl.cdiv(D, BLOCK_N)
+    pid_m = pid_mn // grid_n
+    pid_n = pid_mn % grid_n
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_k = tl.arange(0, BLOCK_K)
+
+    a_ptrs = a_ptr + pid_b * stride_ab + offs_m[:, None] * stride_am + offs_k[None, :] * stride_ak
+    v_ptrs = v_ptr + pid_b * stride_vb + offs_k[:, None] * stride_vk + offs_n[None, :] * stride_vn
+
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.int32)
+    for k in range(0, tl.cdiv(NK, BLOCK_K)):
+        k_mask = offs_k + k * BLOCK_K < NK
+        a = tl.load(
+            a_ptrs,
+            mask=(offs_m[:, None] < NQ) & k_mask[None, :],
+            other=0,
+        )
+        v = tl.load(
+            v_ptrs,
+            mask=(offs_n[None, :] < D) & k_mask[:, None],
+            other=0,
+        )
+        acc += tl.dot(a, v)
+        a_ptrs += BLOCK_K * stride_ak
+        v_ptrs += BLOCK_K * stride_vk
+
+    out_ptrs = out_ptr + pid_b * stride_ob + offs_m[:, None] * stride_om + offs_n[None, :] * stride_on
+    out_mask = (offs_m[:, None] < NQ) & (offs_n[None, :] < D)
+    tl.store(out_ptrs, acc, mask=out_mask)
+
+
+def triton_int8_bmm_av(attn, v):
+    """
+    Batched int8 (attn @ V) using Triton.
+    attn: (B, H, NQ, NK) int8
+    v: (B, H, NK, D) int8
+    returns: (B, H, NQ, D) int32
+    """
+    assert attn.is_cuda and v.is_cuda, "triton_int8_bmm_av expects CUDA tensors"
+    assert attn.dtype == torch.int8 and v.dtype == torch.int8, "attn/v must be int8"
+    assert attn.dim() == 4 and v.dim() == 4, "attn/v must be 4D"
+    assert attn.shape[0] == v.shape[0] and attn.shape[1] == v.shape[1], "batch/head mismatch"
+    assert attn.shape[3] == v.shape[2], "NK dim mismatch"
+
+    bsz, nheads, n_q, n_k = attn.shape
+    d = v.shape[3]
+    a3 = attn.reshape(bsz * nheads, n_q, n_k).contiguous()
+    v3 = v.reshape(bsz * nheads, n_k, d).contiguous()
+
+    out = torch.empty((bsz * nheads, n_q, d), device=attn.device, dtype=torch.int32)
+    grid = lambda META: (
+        bsz * nheads,
+        triton.cdiv(n_q, META['BLOCK_M']) * triton.cdiv(d, META['BLOCK_N']),
+    )
+    int8_av_bmm_kernel[grid](
+        a3, v3, out,
+        a3.stride(0), a3.stride(1), a3.stride(2),
+        v3.stride(0), v3.stride(1), v3.stride(2),
+        out.stride(0), out.stride(1), out.stride(2),
+        n_q, d, n_k,
+    )
+    return out.reshape(bsz, nheads, n_q, d)
+
+
 @triton.jit
 def lut_softmax_kernel(
     x_ptr,
@@ -276,7 +364,7 @@ def lut_softmax_kernel(
     x = tl.minimum(x, 0.0)
 
     step = LUT_RANGE / (LUT_SIZE - 1)
-    idx = tl.round(-x / step).to(tl.int32)
+    idx = tl.floor((-x / step) + 0.5).to(tl.int32)
     idx = tl.where(idx < 0, 0, idx)
     idx = tl.where(idx > (LUT_SIZE - 1), LUT_SIZE - 1, idx)
 
@@ -286,6 +374,50 @@ def lut_softmax_kernel(
     probs = exp_int / sum_int
 
     tl.store(y_ptr + row * stride_ym + offs * stride_yn, probs, mask=mask)
+
+
+@triton.jit
+def lut_softmax_int8_kernel(
+    x_ptr,
+    y_ptr,
+    lut_ptr,
+    stride_xm,
+    stride_xn,
+    stride_ym,
+    stride_yn,
+    n_cols,
+    LUT_RANGE: tl.constexpr,
+    LUT_SIZE: tl.constexpr,
+    OUT_SCALE: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    row = tl.program_id(0)
+    offs = tl.arange(0, BLOCK_SIZE)
+    mask = offs < n_cols
+
+    x = tl.load(x_ptr + row * stride_xm + offs * stride_xn, mask=mask, other=-float("inf"))
+    x = x.to(tl.float32)
+    x_max = tl.max(x, axis=0)
+    x = x - x_max
+    x = tl.maximum(x, -LUT_RANGE)
+    x = tl.minimum(x, 0.0)
+
+    step = LUT_RANGE / (LUT_SIZE - 1)
+    idx = tl.floor((-x / step) + 0.5).to(tl.int32)
+    idx = tl.where(idx < 0, 0, idx)
+    idx = tl.where(idx > (LUT_SIZE - 1), LUT_SIZE - 1, idx)
+
+    exp_int = tl.load(lut_ptr + idx, mask=mask, other=0).to(tl.float32)
+    sum_int = tl.sum(exp_int, axis=0)
+    sum_int = tl.maximum(sum_int, 1.0)
+    probs = exp_int / sum_int
+
+    q = tl.floor((probs * OUT_SCALE) + 0.5)
+    q = tl.where(q < 0, 0, q)
+    q = tl.where(q > 127, 127, q)
+    q = q.to(tl.int8)
+
+    tl.store(y_ptr + row * stride_ym + offs * stride_yn, q, mask=mask)
 
 
 def triton_lut_softmax(x, lut, lut_range: float, lut_size: int):
@@ -314,3 +446,33 @@ def triton_lut_softmax(x, lut, lut_range: float, lut_size: int):
         BLOCK_SIZE=block,
     )
     return y.to(x.dtype)
+
+
+def triton_lut_softmax_int8(x, lut, lut_range: float, lut_size: int, out_scale: float):
+    """
+    LUT-approximated softmax over the last dimension with int8 output.
+    x: (M, N) tensor, float/bfloat16/float16 on CUDA.
+    lut: (lut_size,) int32 tensor on CUDA.
+    out_scale: float scale factor applied before int8 quantization.
+    """
+    assert x.is_cuda, "triton_lut_softmax_int8 expects CUDA tensor"
+    assert x.dim() == 2, "triton_lut_softmax_int8 expects 2D tensor"
+    assert lut.is_cuda, "LUT must be on CUDA"
+    M, N = x.shape
+    block = triton.next_power_of_2(N)
+    if block > 2048:
+        raise ValueError(f"Unsupported N={N} for lut softmax block={block}")
+
+    y = torch.empty_like(x, dtype=torch.int8)
+    grid = (M,)
+    lut_softmax_int8_kernel[grid](
+        x, y, lut,
+        x.stride(0), x.stride(1),
+        y.stride(0), y.stride(1),
+        N,
+        LUT_RANGE=lut_range,
+        LUT_SIZE=lut_size,
+        OUT_SCALE=out_scale,
+        BLOCK_SIZE=block,
+    )
+    return y
