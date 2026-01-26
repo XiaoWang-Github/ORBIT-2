@@ -11,12 +11,7 @@ import xformers
 from xformers.components.attention.core import scaled_dot_product_attention as xformers_sdpa
 
 # Import PureInt8Linear
-from climate_learn.models.hub.components.pure_int8_linear import (
-    PureInt8Linear,
-    QuantizedTensor,
-    quantize_activation_to_int8,
-    get_int8_output_dtype,
-)
+from climate_learn.models.hub.components.pure_int8_linear import PureInt8Linear, QuantizedTensor
 
 _ATTENTION_DEBUG_ENABLED = os.environ.get("ATTENTION_DEBUG", "0") == "1"
 _INT8_SOFTMAX_ENABLED = os.environ.get("INT8_SOFTMAX", "0") == "1"
@@ -37,13 +32,7 @@ _INT8_ATTENTION_LOGITS_TORCH_DTYPE = (
 )
 _INT8_ATTENTION_AV_TRITON = os.environ.get("INT8_ATTENTION_AV_TRITON", "1") == "1"
 _INT8_ATTENTION_TIMING = os.environ.get("INT8_ATTENTION_TIMING", "0") == "1"
-_INT8_ATTENTION_QKV_LOG = os.environ.get("INT8_ATTENTION_QKV_LOG", "0") == "1"
-_INT8_ATTENTION_TIMING_EVERY = 50
-_timing_every_env = os.environ.get("INT8_ATTENTION_TIMING_EVERY", "50").strip()
-if _timing_every_env:
-    _INT8_ATTENTION_TIMING_EVERY = int(_timing_every_env)
-_INT8_VARATTN_KV_TRITON = os.environ.get("INT8_VARATTN_KV_TRITON", "0") == "1"
-_INT8_VARATTN_KV_TRITON_LOG = os.environ.get("INT8_VARATTN_KV_TRITON_LOG", "0") == "1"
+_INT8_ATTENTION_TIMING_EVERY = int(os.environ.get("INT8_ATTENTION_TIMING_EVERY", "50"))
 _EXP_LUT_CACHE = {}
 _INT8_SOFTMAX_LOGGED = False
 _INT8_SOFTMAX_TRITON_LOGGED = False
@@ -53,9 +42,6 @@ _INT8_ATTENTION_E2E_TRITON_LOGGED = False
 _INT8_SOFTMAX_OUTPUT_INT8_LOGGED = False
 _INT8_ATTENTION_AV_TRITON_LOGGED = False
 _INT8_ATTENTION_TIMING_COUNT = 0
-_INT8_ATTENTION_QKV_LOGGED = False
-_INT8_VARATTN_KV_TRITON_LOGGED = False
-_INT8_VARATTN_KV_TRITON_TYPES_LOGGED = False
 
 def debug_print(*args, **kwargs):
     if not _ATTENTION_DEBUG_ENABLED:
@@ -330,7 +316,6 @@ class Attention(nn.Module):
         self.tensor_par_group = tensor_par_group
 
         self.qkv = PureInt8Linear(dim, dim * 3 //self.tensor_par_size, bias=qkv_bias)
-        self.qkv.is_qkv = True
         self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
@@ -341,8 +326,7 @@ class Attention(nn.Module):
         debug_tensor("Attention.forward: Input x", x)
         
         B, N, C = x.shape
-        global _INT8_ATTENTION_QKV_LOGGED
-        out_dtype = x.int8.dtype if isinstance(x, QuantizedTensor) else x.dtype
+        out_dtype = x.dtype
         use_int8_e2e = (
             _INT8_ATTENTION_E2E
             and self.fused_attn == FusedAttn.NONE
@@ -391,20 +375,6 @@ class Attention(nn.Module):
             else: # FusedAttn.NONE
                 if _INT8_ATTENTION_E2E and self.qkv.int8_enabled:
                     _maybe_log_e2e_int8()
-                    if _INT8_ATTENTION_QKV_LOG and not _INT8_ATTENTION_QKV_LOGGED:
-                        rank = 0
-                        if dist.is_initialized():
-                            rank = dist.get_rank()
-                        if rank == 0:
-                            x_shape = x.int8.shape if isinstance(x, QuantizedTensor) else x.shape
-                            m_dim = x_shape[0] * x_shape[1]
-                            k_dim = x_shape[2]
-                            n_dim = self.qkv.out_features
-                            print(
-                                f"INT8_ATTENTION_QKV M={m_dim} K={k_dim} N={n_dim}",
-                                flush=True,
-                            )
-                        _INT8_ATTENTION_QKV_LOGGED = True
                     if timing_events is not None:
                         s = torch.cuda.Event(enable_timing=True)
                         e = torch.cuda.Event(enable_timing=True)
@@ -539,44 +509,35 @@ class VariableMapping_Attention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = PureInt8Linear(dim // tensor_par_size, dim, bias=proj_bias)
         self.proj_drop = nn.Dropout(proj_drop)
-        self._cached_var_query_qt = None
-        self._cached_var_query_version = None
 
     def forward(self, var_query: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        global _INT8_VARATTN_KV_TRITON_LOGGED
-        global _INT8_VARATTN_KV_TRITON_TYPES_LOGGED
         if _ATTENTION_DEBUG_ENABLED:
-            var_query_shape = var_query.int8.shape if isinstance(var_query, QuantizedTensor) else var_query.shape
-            x_shape = x.int8.shape if isinstance(x, QuantizedTensor) else x.shape
-            debug_print(f"VariableMapping_Attention.forward: var_query shape: {var_query_shape}, x shape: {x_shape}")
-        out_dtype = get_int8_output_dtype() if isinstance(x, QuantizedTensor) else x.dtype
+            debug_print(f"VariableMapping_Attention.forward: var_query shape: {var_query.shape}, x shape: {x.shape}")
+        
+        out_dtype = x.dtype
         use_int8_e2e = (
             _INT8_ATTENTION_E2E
             and self.fused_attn == FusedAttn.NONE
             and self.q.int8_enabled
             and self.kv.int8_enabled
         )
-        var_query_tensor = var_query.int8 if isinstance(var_query, QuantizedTensor) else var_query
-        x_tensor = x.int8 if isinstance(x, QuantizedTensor) else x
         timing_events = None
-        if _INT8_ATTENTION_TIMING and x_tensor.is_cuda:
+        if _INT8_ATTENTION_TIMING and x.is_cuda:
             timing_events = {}
         if self.tensor_par_size >1:
-            var_query_tensor = F_Identity_B_AllReduce_VariableMapping(var_query_tensor, group=self.tensor_par_group)
-            x_tensor = F_Identity_B_AllReduce_VariableMapping(x_tensor, group=self.tensor_par_group)
+            var_query= F_Identity_B_AllReduce_VariableMapping(var_query, group=self.tensor_par_group)
+            x= F_Identity_B_AllReduce_VariableMapping(x, group=self.tensor_par_group)
 
-        N_a = var_query_tensor.size(dim=1) #number of aggregated variables
-        B, N_i, C = x_tensor.shape #B batch times sequence length, #N_i number of input variables, C embedding size
-        if var_query_tensor.size(0) != B:
-            var_query_tensor = var_query_tensor.expand(B, -1, -1).contiguous()
+        N_a = var_query.size(dim=1) #number of aggregated variables
+        B, N_i, C = x.shape #B batch times sequence length, #N_i number of input variables, C embedding size
 
         try:
             if not use_int8_e2e:
-                q_output = self.q(var_query_tensor)
+                q_output = self.q(var_query)
                 debug_tensor("VariableMapping_Attention.forward: q_output", q_output)
                 q = q_output.reshape(B, N_a, self.num_heads // self.tensor_par_size, self.head_dim ).permute(0, 2, 1, 3)
 
-                kv_output = self.kv(x_tensor)
+                kv_output = self.kv(x)
                 debug_tensor("VariableMapping_Attention.forward: kv_output", kv_output)
                 kv = kv_output.reshape(B, N_i, 2, self.num_heads // self.tensor_par_size, self.head_dim).permute(2, 0, 3, 1, 4)
 
@@ -602,77 +563,12 @@ class VariableMapping_Attention(nn.Module):
             else: # FusedAttn.NONE
                 if _INT8_ATTENTION_E2E and self.q.int8_enabled and self.kv.int8_enabled:
                     _maybe_log_e2e_int8()
-                    if _INT8_VARATTN_KV_TRITON_LOG and not _INT8_VARATTN_KV_TRITON_TYPES_LOGGED:
-                        rank = 0
-                        if dist.is_initialized():
-                            rank = dist.get_rank()
-                        if rank == 0:
-                            print(
-                                "INT8_VARATTN_KV_TRITON input types: "
-                                f"var_query_qt={isinstance(var_query, QuantizedTensor)} "
-                                f"x_qt={isinstance(x, QuantizedTensor)}",
-                                flush=True,
-                            )
-                        _INT8_VARATTN_KV_TRITON_TYPES_LOGGED = True
                     if timing_events is not None:
                         s = torch.cuda.Event(enable_timing=True)
                         e = torch.cuda.Event(enable_timing=True)
                         s.record()
-                    if isinstance(var_query, QuantizedTensor):
-                        q_qt = self.q.forward_int8(var_query)
-                    else:
-                        var_query_version = getattr(var_query, "_version", None)
-                        if (
-                            self._cached_var_query_qt is None
-                            or var_query_version is None
-                            or self._cached_var_query_version != var_query_version
-                        ):
-                            self._cached_var_query_qt = quantize_activation_to_int8(var_query_tensor)
-                            self._cached_var_query_version = var_query_version
-                        cached_q = self._cached_var_query_qt
-                        if cached_q.int8.size(0) != B:
-                            cached_q = QuantizedTensor(
-                                int8=cached_q.int8.expand(B, -1, -1).contiguous(),
-                                scale=cached_q.scale,
-                            )
-                        q_qt = self.q.forward_int8(cached_q)
-                    if isinstance(x, QuantizedTensor):
-                        if _INT8_VARATTN_KV_TRITON:
-                            try:
-                                from climate_learn.models.hub.components import triton_ops
-                                weight_int8, weight_int8_t, _, weight_scale = self.kv._get_cached_weight_quant()
-                                input_int8 = x.int8
-                                input_scale = x.scale
-                                input_flat = input_int8.reshape(-1, input_int8.shape[-1])
-                                if not input_flat.is_contiguous():
-                                    input_flat = input_flat.contiguous()
-                                output_scale = (input_scale * weight_scale).to(torch.float32)
-                                if _INT8_VARATTN_KV_TRITON_LOG and not _INT8_VARATTN_KV_TRITON_LOGGED:
-                                    rank = 0
-                                    if dist.is_initialized():
-                                        rank = dist.get_rank()
-                                    if rank == 0:
-                                        m_dim = input_flat.shape[0]
-                                        k_dim = input_flat.shape[1]
-                                        n_dim = weight_int8_t.shape[1]
-                                        print(
-                                            f"INT8_VARATTN_KV_TRITON M={m_dim} K={k_dim} N={n_dim}",
-                                            flush=True,
-                                        )
-                                    _INT8_VARATTN_KV_TRITON_LOGGED = True
-                                output_int8_flat = triton_ops.triton_int8_linear_out_int8_varattn(
-                                    input_flat, weight_int8_t, output_scale
-                                )
-                                output_int8 = output_int8_flat.reshape(
-                                    B, N_i, self.kv.out_features
-                                )
-                                kv_qt = QuantizedTensor(int8=output_int8, scale=output_scale)
-                            except Exception:
-                                kv_qt = self.kv.forward_int8(x)
-                        else:
-                            kv_qt = self.kv.forward_int8(x)
-                    else:
-                        kv_qt = self.kv.forward_int8(x_tensor)
+                    q_qt = self.q.forward_int8(var_query)
+                    kv_qt = self.kv.forward_int8(x)
                     if timing_events is not None:
                         e.record()
                         timing_events["qkv_int8"] = (s, e)

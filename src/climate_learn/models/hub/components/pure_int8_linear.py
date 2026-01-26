@@ -6,16 +6,6 @@ from torch.autograd import Function
 import math
 import torch.distributed as dist
 import os
-
-
-def _get_int_env(name: str, default: int) -> int:
-    value = os.environ.get(name, "")
-    if value == "":
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
 # Use ROCm/ATen int8 GEMM (hits rocBLASLt on MI250x) instead of custom Triton
 _int_mm = torch.ops.aten._int_mm
 _DISABLE_STOCHASTIC_ROUNDING = os.environ.get("INT8_DISABLE_STOCHASTIC_ROUND", "0") == "1"
@@ -26,14 +16,6 @@ _INPUT_SCALE_FREEZE_AFTER = int(os.environ.get("INT8_INPUT_SCALE_FREEZE_AFTER", 
 _INPUT_SCALE_SAMPLE_STRIDE = int(os.environ.get("INT8_INPUT_SCALE_SAMPLE_STRIDE", "1"))
 _OUTPUT_SCALE_SAMPLE_STRIDE = int(os.environ.get("INT8_OUTPUT_SCALE_SAMPLE_STRIDE", "1"))
 _OUTPUT_REQUANT_METHOD = os.environ.get("INT8_OUTPUT_REQUANT_METHOD", "auto").lower()
-_OUTPUT_REQUANT_TRITON = os.environ.get("INT8_OUTPUT_REQUANT_TRITON", "0") == "1"
-_INT8_QKV_REQUANT_TRITON = os.environ.get("INT8_QKV_REQUANT_TRITON", "0") == "1"
-_INT8_QKV_BLOCK_M = _get_int_env("INT8_QKV_BLOCK_M", 0)
-_INT8_QKV_BLOCK_N = _get_int_env("INT8_QKV_BLOCK_N", 0)
-_INT8_QKV_BLOCK_K = _get_int_env("INT8_QKV_BLOCK_K", 0)
-_INT8_QKV_GROUP_M = _get_int_env("INT8_QKV_GROUP_M", 8)
-_INT8_QKV_NUM_WARPS = _get_int_env("INT8_QKV_NUM_WARPS", 4)
-_INT8_QKV_NUM_STAGES = _get_int_env("INT8_QKV_NUM_STAGES", 3)
 _INT8_OUTPUT_DTYPE = torch.bfloat16
 
 
@@ -41,11 +23,6 @@ def set_int8_output_dtype(dtype: torch.dtype) -> None:
     """Set the output dtype for INT8 path (e.g., torch.float32 or torch.bfloat16)."""
     global _INT8_OUTPUT_DTYPE
     _INT8_OUTPUT_DTYPE = dtype
-
-
-def get_int8_output_dtype() -> torch.dtype:
-    """Get the output dtype for INT8 path."""
-    return _INT8_OUTPUT_DTYPE
 
 
 @dataclass
@@ -319,63 +296,24 @@ class PureInt8Linear(nn.Module):
     def forward_int8(self, input):
         """Return INT8 output with scale for end-to-end int8 path."""
         if self.int8_enabled:
-            if isinstance(input, QuantizedTensor):
-                input_int8 = input.int8
-                input_scale = input.scale
-            else:
-                input_abs_override = None
-                if 0.0 < _INPUT_SCALE_EMA_ALPHA < 1.0:
-                    input_abs_override = self._maybe_update_input_abs(input)
-                input_abs_max = input.abs().max() if input_abs_override is None else input_abs_override
-                _, input_scale = get_scale_shift(input_abs_max)
-                input_int8 = quantize_to_int8_shifted(input, input_scale, stochastic=False)
+            input_abs_override = None
+            if 0.0 < _INPUT_SCALE_EMA_ALPHA < 1.0:
+                input_abs_override = self._maybe_update_input_abs(input)
+            input_abs_max = input.abs().max() if input_abs_override is None else input_abs_override
+            _, input_scale = get_scale_shift(input_abs_max)
+            input_int8 = quantize_to_int8_shifted(input, input_scale, stochastic=False)
 
             weight_int8, weight_int8_t, weight_shift, weight_scale = self._get_cached_weight_quant()
             input_int8_flattened = input_int8.reshape(-1, input_int8.shape[-1])
             if not input_int8_flattened.is_contiguous():
                 input_int8_flattened = input_int8_flattened.contiguous()
-            output_shape = list(input_int8.shape)
+            output_int32_flat = _int_mm(input_int8_flattened, weight_int8_t)
+
+            output_shape = list(input.shape)
             output_shape[-1] = weight_int8.shape[0]
+            output_int32 = output_int32_flat.reshape(output_shape)
 
             output_scale = input_scale * weight_scale
-            use_qkv_triton = _INT8_QKV_REQUANT_TRITON and getattr(self, "is_qkv", False) and self.bias is None
-            if use_qkv_triton:
-                try:
-                    from climate_learn.models.hub.components import triton_ops
-                    output_scale_fp32 = output_scale.to(torch.float32)
-                    if _INT8_QKV_BLOCK_M > 0 and _INT8_QKV_BLOCK_N > 0 and _INT8_QKV_BLOCK_K > 0:
-                        output_int8_flat = triton_ops.triton_int8_linear_out_int8_fixed(
-                            input_int8_flattened,
-                            weight_int8_t,
-                            output_scale_fp32,
-                            _INT8_QKV_BLOCK_M,
-                            _INT8_QKV_BLOCK_N,
-                            _INT8_QKV_BLOCK_K,
-                            _INT8_QKV_GROUP_M,
-                            _INT8_QKV_NUM_WARPS,
-                            _INT8_QKV_NUM_STAGES,
-                        )
-                    else:
-                        output_int8_flat = triton_ops.triton_int8_linear_out_int8(
-                            input_int8_flattened, weight_int8_t, output_scale_fp32
-                        )
-                    output_int8 = output_int8_flat.reshape(output_shape)
-                    return QuantizedTensor(int8=output_int8, scale=output_scale_fp32)
-                except Exception:
-                    pass
-            if self.bias is None and _OUTPUT_REQUANT_TRITON:
-                try:
-                    from climate_learn.models.hub.components import triton_ops
-                    output_scale_fp32 = output_scale.to(torch.float32)
-                    output_int8_flat = triton_ops.triton_int8_linear_out_int8(
-                        input_int8_flattened, weight_int8_t, output_scale_fp32
-                    )
-                    output_int8 = output_int8_flat.reshape(output_shape)
-                    return QuantizedTensor(int8=output_int8, scale=output_scale_fp32)
-                except Exception:
-                    pass
-            output_int32_flat = _int_mm(input_int8_flattened, weight_int8_t)
-            output_int32 = output_int32_flat.reshape(output_shape)
             if self.bias is None and _OUTPUT_REQUANT_METHOD == "direct":
                 output_int8 = torch.clamp(
                     torch.round(output_int32.to(torch.float32) / output_scale), -127, 127
