@@ -1,4 +1,5 @@
 from .components.cnn_blocks import PeriodicConv2D
+import os
 from .components.pos_embed import get_2d_sincos_pos_embed
 from .utils import register
 import torch
@@ -9,6 +10,7 @@ import torch.distributed as dist
 # Third party
 from timm.models.vision_transformer import trunc_normal_
 from .components.attention import VariableMapping_Attention
+from .components.pure_int8_linear import quantize_activation_to_int8
 from einops import rearrange
 from .components.pos_embed import interpolate_pos_embed_on_the_fly
 from .components.patch_embed import PatchEmbed 
@@ -16,6 +18,7 @@ from .components.vit_blocks import Block
 from climate_learn.utils.dist_functions import F_Identity_B_Broadcast, Grad_Inspect
 from climate_learn.utils.fused_attn import FusedAttn
 
+_INT8_VARATTN_PREQUANT = os.environ.get("INT8_VARATTN_PREQUANT", "1") == "1"
 
 @register("res_slimvit")
 class Res_Slim_ViT(nn.Module):
@@ -213,10 +216,13 @@ class Res_Slim_ViT(nn.Module):
 
         #var_query = self.var_query.repeat_interleave(x.shape[0], dim=0)
 
-        var_query = self.var_query.expand(x.shape[0], -1, -1).contiguous()
+        var_query = self.var_query
 
         #x , _ = self.var_agg(var_query, x, x)
-        x = self.var_agg(var_query, x)  # BxL, V~ , D, where V~ is the aggregated variables
+        if self.var_agg.q.int8_enabled and self.var_agg.kv.int8_enabled and _INT8_VARATTN_PREQUANT:
+            x = self.var_agg(var_query, quantize_activation_to_int8(x))
+        else:
+            x = self.var_agg(var_query, x)  # BxL, V~ , D, where V~ is the aggregated variables
 
         x = x.squeeze()
 

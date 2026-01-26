@@ -1,0 +1,71 @@
+digraph int8_flow {
+  rankdir=LR;
+  graph [fontsize=12, fontname="Helvetica"];
+  node  [shape=box, style="rounded,filled", fontsize=11, fontname="Helvetica", fillcolor="#f7f7f7"];
+  edge  [fontsize=10, fontname="Helvetica"];
+
+  subgraph cluster_transformer {
+    label="Transformer Path";
+    color="#b0c4de";
+    style="rounded";
+
+    tok      [label="Patch/Tokenize\nFP"];
+    varattn  [label="VarAttention\nINT8 E2E"];
+
+    subgraph cluster_attn_block {
+      label="Attention Block (per layer)";
+      color="#87a7c3";
+      style="rounded";
+
+      qkv_lin  [label="QKV Linear\nINT8"];
+      split_qkv [label="Split Q / K / V\nreshape+permute\nFP metadata"];
+      qk       [label="QK^T\nINT8 Triton"];
+      softmax  [label="Softmax LUT\nINT8 Triton"];
+      av       [label="AV\nINT8 Triton"];
+      proj     [label="Proj Linear\nINT8"];
+
+      qkv_lin -> split_qkv -> qk -> softmax -> av -> proj;
+    }
+
+    block    [label="Transformer Blocks\n(INT8 E2E)\nrepeated"];
+    out_tok  [label="Transformer Output"];
+
+    tok -> varattn -> block -> out_tok;
+    block -> qkv_lin;
+    proj -> block;
+  }
+
+  subgraph cluster_cnn {
+    label="CNN Residual Path";
+    color="#f0d9b5";
+    style="rounded";
+
+    cnn_in   [label="Residual Input\nFP"];
+    cnn_blk  [label="CNN path2\nFP"];
+    cnn_out  [label="CNN Residual Output"];
+
+    cnn_in -> cnn_blk -> cnn_out;
+  }
+
+  subgraph cluster_kernels {
+    label="Kernel Backends (INT8)";
+    color="#e6e6e6";
+    style="rounded,dashed";
+
+    rocblas [label="rocBLASLt\nATen _int_mm", shape=ellipse, fillcolor="#ffffff"];
+    triton  [label="Triton kernels\n(QK/AV/LUT/KV)", shape=ellipse, fillcolor="#ffffff"];
+  }
+
+  qkv_lin -> rocblas [style=dashed, label="_int_mm"];
+  proj    -> rocblas [style=dashed, label="_int_mm"];
+  qk      -> triton  [style=dashed, label="int8 QK"];
+  av      -> triton  [style=dashed, label="int8 AV"];
+  softmax -> triton  [style=dashed, label="LUT"];
+
+  merge [label="Fuse / Add\nFP", fillcolor="#f7f7f7"];
+  out   [label="Final Output"];
+
+  out_tok -> merge;
+  cnn_out -> merge;
+  merge -> out;
+}

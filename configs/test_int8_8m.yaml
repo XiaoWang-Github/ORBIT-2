@@ -1,6 +1,6 @@
 #-----------   TRAINER -------------
 trainer:
-  max_epochs: 5 # Short run for LUT softmax comparison
+  max_epochs: 3 # Short run for LUT softmax comparison
   checkpoint: 
   pretrain:
   batch_size: 32
