@@ -252,6 +252,7 @@ def main():
     batch_size = conf["trainer"]["batch_size"]
     num_workers = conf["trainer"]["num_workers"]
     buffer_size = conf["trainer"]["buffer_size"]
+    spatial_resolution = conf["data"]["spatial_resolution"]
     
     # Priority: 1) Command line argument, 2) Config pretrain path
     if args.checkpoint:
@@ -606,27 +607,49 @@ def main():
         model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn
     )
 
+
+    # Update spatial resolution, image size, and number of variables to model
+    # based on datasets
+    in_shape, _ = data_module.get_data_dims()
+            
+    print("in_shape is ",in_shape,flush=True)
+
+    _,_, in_height, in_width = in_shape
+
+    with FSDP.summon_full_params(model):
+        model.data_config(
+            spatial_resolution[data_key],
+            (in_height, in_width),
+            len(in_vars),
+            len(out_vars),
+        )
+
+
+
     # Set the model to evaluation mode (disable dropout, batch norm training, etc.)
     model.eval()
 
+    
     # Run visualization on specified sample and variable
     # Note: All ranks must participate in visualization due to potential distributed operations
-    cl.utils.visualize.visualize_at_index(
-        model,
-        data_module,
-        dm_vis,
-        out_list=out_vars,
-        in_transform=denorm,
-        out_transform=denorm,
-        variable=args.variable,  # Variable to visualize
-        src=data_key,
-        device=device,
-        div=div,
-        overlap=overlap,
-        index=args.index,  # Sample index to visualize
-        tensor_par_size=tensor_par_size,
-        tensor_par_group=tensor_par_group,
-    )
+
+    with torch.no_grad():
+        cl.utils.visualize.visualize_at_index(
+            model,
+            data_module,
+            dm_vis,
+            out_list=out_vars,
+            in_transform=denorm,
+            out_transform=denorm,
+            variable=args.variable,  # Variable to visualize
+            src=data_key,
+            device=device,
+            div=div,
+            overlap=overlap,
+            index=args.index,  # Sample index to visualize
+            tensor_par_size=tensor_par_size,
+            tensor_par_group=tensor_par_group,
+        )
 
     # Clean up distributed process group
     dist.destroy_process_group()

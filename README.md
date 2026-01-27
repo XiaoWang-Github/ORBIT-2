@@ -340,6 +340,20 @@ ORBIT-2 achieves high-fidelity precipitation downscaling (1998–2021) across 58
 ERA5 input at 28km and ORBIT-2 downscaled output at 7km for global precipitation.
 [ORBIT-2 animation](https://www.youtube.com/watch?v=Iahsl1L_1jQ)
 
+### Pre-trained Models on Hugging Face
+Pre-trained ORBIT-2 checkpoints and their corresponding configuration files are available on Hugging Face. These models are fine-tuned for specific regions and climate variables.
+
+#### US Regional Models
+The [US fine-tuned models](https://huggingface.co/jychoi-hpc/ORBIT-2/tree/main/us-finetune) include checkpoints and configuration files for 9.5M and 126M parameter models targeting precipitation and temperature:
+- `us_9.5m_precipitation.ckpt` / `us_9.5m_precipitation.yaml`
+- `us_9.5m_temperature.ckpt` / `us_9.5m_temperature.yaml`
+- `us_126m_precipitation.ckpt` / `us_126m_precipitation.yaml`
+- `us_126m_temperature.ckpt` / `us_126m_temperature.yaml`
+
+#### Global Models
+The [global fine-tuned models](https://huggingface.co/jychoi-hpc/ORBIT-2/tree/main/global-finetune) include checkpoints and configuration files for 9.5M and 126M parameter models targeting global precipitation:
+- `global_9.5m_precipitation.ckpt` / `global_9.5m_precipitation.yaml`
+- `global_126m_precipitation.ckpt` / `global_126m_precipitation.yaml`
 
 ### Citation
 If you use ORBIT-2 in your research, please cite both the software and the paper:
