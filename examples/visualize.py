@@ -254,6 +254,11 @@ def main():
     buffer_size = conf["trainer"]["buffer_size"]
     spatial_resolution = conf["data"]["spatial_resolution"]
     
+    # HJY fix 2-11-2026
+    # force reduce batch size and num_workers as 1
+    batch_size = 1
+    num_workers = 1
+
     # Priority: 1) Command line argument, 2) Config pretrain path
     if args.checkpoint:
         pretrain_path = args.checkpoint
