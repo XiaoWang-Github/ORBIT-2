@@ -87,14 +87,16 @@ def calculate_tile_bounds(
     # Add overlap based on tile position
     if tile_idx == 0:
         # First tile: only overlap on right
+        start += overlap_start
         end += overlap_start
     elif tile_idx == total_tiles - 1:
         # Last tile: only overlap on left
         start -= overlap_end
-    else:
-        # Middle tiles: overlap on both sides
-        start -= overlap_start
-        end += overlap_end
+        end -= overlap_end
+
+    # Middle tiles: overlap on both sides
+    start -= overlap_start
+    end += overlap_end
 
     return start, end
 

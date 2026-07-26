@@ -155,6 +155,13 @@ class IterDataModule(torch.nn.Module):
         lat = np.load(os.path.join(self.out_root_dir, "lat.npy"))
         lon = np.load(os.path.join(self.out_root_dir, "lon.npy"))
         return lat, lon
+    
+    def get_lat_lon_dims(self):
+        in_lat = len(np.load(os.path.join(self.inp_root_dir, "lat.npy")))
+        in_lon = len(np.load(os.path.join(self.inp_root_dir, "lon.npy")))
+        out_lat = len(np.load(os.path.join(self.out_root_dir, "lat.npy")))
+        out_lon = len(np.load(os.path.join(self.out_root_dir, "lon.npy")))
+        return in_lat, in_lon, out_lat, out_lon
 
     def get_data_variables(self):
         out_vars = copy.deepcopy(self.out_vars)

@@ -1,6 +1,7 @@
 # Standard library
 from argparse import ArgumentParser
 import os
+import math
 import torch
 import functools
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -1014,6 +1015,32 @@ def main(device):
         scaler = None
         min_scale = None
 
+
+    def check_even_division(width, height, n_div):
+       """
+       Check if width and height can be evenly divided into n_div x n_div tiles.
+    
+       Returns:
+         True  -> if valid
+         False -> if invalid (and prints valid alternatives)
+       """
+
+       if width % n_div == 0 and height % n_div == 0:
+           return True
+
+       print(f"{n_div} x {n_div} division is NOT possible for image {width} x {height}")
+       print("Valid divisions are:\n")
+
+       g = math.gcd(width, height)
+
+       for n in range(1, g + 1):
+           if g % n == 0:
+               tile_w = width // n
+               tile_h = height // n
+               print(f"{n} x {n} -> tile size {tile_w} x {tile_h}")
+
+       return False
+
     while (epoch_start + interval_epochs) < max_epochs:
 
         for data_key in low_res_dir.keys():
@@ -1050,16 +1077,34 @@ def main(device):
             data_module.setup()
 
             if do_tiling:
-                lat, lon = data_module.get_lat_lon()
-                yout = len(lat) // div
-                yinp = yout // 4 + overlap
+                in_lat, in_lon, out_lat, out_lon = data_module.get_lat_lon_dims()
+                print( 'Dimension', in_lat, in_lon, out_lat, out_lon )
+                if not check_even_division( in_lon, in_lat, div ):
+                    sys.exit(
+                        "Please adjust tiling division."
+                    )
+                # yout = len(in_lat) // div
+                yinp = in_lat // div
+                yinp = yinp + overlap
+                xinp = in_lon // div
+                xinp = xinp + overlap * 2
+                aspect_ratio = xinp / yinp
+                target_ratio = 2.0
+                diff = abs( aspect_ratio - target_ratio )
+                if diff > 0:
+                    print(
+                        f"Invalid Aspect Ratio: {xinp}x{yinp} (Ratio: {aspect_ratio:.4f}). "
+                    )
+                    sys.exit(
+                        "Please adjust tiling division."
+                    )          
                 if yinp % patch_size != 0:
                     if world_rank == 0:
                         print(f"Tile height: {yinp}, patch_size {patch_size}")
                         print(
                             "Overlap must be adjusted to accommodate patch_size of the "
                             "Transformer. Need to increase the overlap by ",
-                            (yinp % patch_size),
+                            (patch_size - yinp % patch_size),
                         )
                         sys.exit(
                             "Please increase the overlap accordingly to the instructions "
