@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Type
+import math
 from climate_learn.utils.dist_functions import F_Identity_B_AllReduce, F_Identity_B_AllReduce_VariableMapping, Grad_Inspect
 from climate_learn.utils.fused_attn import FusedAttn
 import torch.distributed as dist
@@ -26,6 +27,7 @@ class Attention(nn.Module):
     ) -> None:
         super().__init__()
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
@@ -39,6 +41,19 @@ class Attention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim//self.tensor_par_size, dim, bias=proj_bias)
         self.proj_drop = nn.Dropout(proj_drop)
+        self.init_weights()
+    
+    def init_weights(self):
+        k = math.sqrt(1.0 / self.dim)
+
+        # NOTE: Non-op but good for verbosity
+        nn.init.uniform_(self.qkv.weight, -k, k)
+        if self.qkv.bias is not None:
+            nn.init.uniform_(self.qkv.bias, -k, k)
+        
+        nn.init.uniform_(self.proj.weight, -k, k)
+        if self.proj.bias is not None:
+            nn.init.uniform_(self.proj.bias, -k, k)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, N, C = x.shape
@@ -112,6 +127,7 @@ class VariableMapping_Attention(nn.Module):
     ) -> None:
         super().__init__()
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
@@ -128,6 +144,24 @@ class VariableMapping_Attention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim // tensor_par_size, dim, bias=proj_bias)
         self.proj_drop = nn.Dropout(proj_drop)
+        self.init_weights()
+
+    def init_weights(self):
+        k = math.sqrt(1.0 / self.dim)
+
+        # NOTE: Non-op but good for verbosity
+        nn.init.uniform_(self.q.weight, -k, k)
+        if self.q.bias is not None:
+            nn.init.uniform_(self.q.bias, -k, k)
+        
+        # NOTE: Non-op but good for verbosity
+        nn.init.uniform_(self.kv.weight, -k, k)
+        if self.kv.bias is not None:
+            nn.init.uniform_(self.kv.bias, -k, k)
+
+        nn.init.uniform_(self.proj.weight, -k, k)
+        if self.proj.bias is not None:
+            nn.init.uniform_(self.proj.bias, -k, k)
 
     def forward(self, var_query: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 

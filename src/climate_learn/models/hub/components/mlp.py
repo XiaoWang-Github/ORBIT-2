@@ -3,6 +3,7 @@
 Hacked together by / Copyright 2020 Ross Wightman
 """
 from functools import partial
+import math
 
 from torch import nn as nn
 
@@ -40,6 +41,9 @@ class Mlp(nn.Module):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
+        self.in_features = in_features
+        self.hidden_features = hidden_features
+        self.out_features = out_features
         bias = to_2tuple(bias)
         drop_probs = to_2tuple(drop)
         linear_layer = partial(nn.Conv2d, kernel_size=1) if use_conv else nn.Linear
@@ -53,6 +57,19 @@ class Mlp(nn.Module):
         self.norm = norm_layer(hidden_features) if norm_layer is not None else nn.Identity()
         self.fc2 = linear_layer(hidden_features//tensor_par_size, out_features, bias=bias[1])
         self.drop2 = nn.Dropout(drop_probs[1])
+        self.init_weights()
+
+    def init_weights(self):
+        # NOTE: Non-op but good for verbosity
+        k1 = math.sqrt(1.0 / self.in_features)
+        nn.init.uniform_(self.fc1.weight, -k1, k1)
+        if self.fc1.bias is not None:
+            nn.init.uniform_(self.fc1.bias, -k1, k1)
+
+        k2 = math.sqrt(1.0 / self.hidden_features)
+        nn.init.uniform_(self.fc2.weight, -k2, k2)
+        if self.fc2.bias is not None:
+            nn.init.uniform_(self.fc2.bias, -k2, k2)
 
     def forward(self, x):
 
