@@ -64,15 +64,10 @@ pip install -e .
 
 ## Sparse-Reslim Forecasting Example
 
-A minimal deterministic weather-forecasting example of the ECCV Sparse-Reslim
-method is available in
-[`examples/sparse_reslim_forecasting/`](examples/sparse_reslim_forecasting/README.md).
-It includes a standalone model, environment instructions, the Frontier ERA5
-1.0-degree data path, a Slurm launch script for a 120-hour T2m forecast, and a
-synthetic smoke test. EDM is intentionally outside the scope of this example.
-
-For the complete paper implementation and paper-scale experiments, see the
-[full Sparse-Reslim ECCV repository](https://github.com/janet-sw/Sparse-Reslim).
+A minimal ERA5 1.0-degree, 120-hour deterministic forecasting example is
+available in [`examples/sparse_reslim_forecasting/`](examples/sparse_reslim_forecasting/README.md).
+For the complete ECCV implementation, see the
+[full Sparse-Reslim repository](https://github.com/janet-sw/Sparse-Reslim).
 
 ## Tutorial Example
 
