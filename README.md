@@ -67,9 +67,9 @@ pip install -e .
 A minimal deterministic weather-forecasting example of the ECCV Sparse-Reslim
 method is available in
 [`examples/sparse_reslim_forecasting/`](examples/sparse_reslim_forecasting/README.md).
-It includes a standalone model, a synthetic smoke test, and a single-device
-PyTorch Lightning launch path for ORBIT-style ERA5 NPZ data. EDM is intentionally
-outside the scope of this example.
+It includes a standalone model, environment instructions, the Frontier ERA5
+1.0-degree data path, a Slurm launch script for a 120-hour T2m forecast, and a
+synthetic smoke test. EDM is intentionally outside the scope of this example.
 
 For the complete paper implementation and paper-scale experiments, see the
 [full Sparse-Reslim ECCV repository](https://github.com/janet-sw/Sparse-Reslim).
