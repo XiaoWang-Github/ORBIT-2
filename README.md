@@ -8,7 +8,7 @@
   <img src="docs/figs/example_downscale2.png" width="640px">
 </div>
 
-This repository contains code accompanying the paper [**ORBIT-2: Scaling Exascale Vision Foundation Models for Weather and Climate Downscaling**](https://arxiv.org/pdf/2505.04802). In addition to downscaling, this repository also shows how to use the demonstrated innovation for weather forecasting with a minimal example.
+This repository contains code accompanying the paper [**ORBIT-2: Scaling Exascale Vision Foundation Models for Weather and Climate Downscaling**](https://arxiv.org/pdf/2505.04802). In addition to downscaling, this repository includes a minimal example demonstrating how the ORBIT-2 innovations can be applied to weather forecasting.
 
 ## Overview
 ORBIT-2 is a scalable vision foundation model for weather and climate applications, supporting both global hyper-resolution downscaling and deterministic weather forecasting. ORBIT-2 is designed to efficiently process large-scale spatiotemporal data and scale to extreme model sizes and sequence lengths on modern GPU supercomputers.
@@ -420,6 +420,37 @@ Additional forecasting configurations and experiments
 Sparse Residual Routing for Architecture Token Dropping
 
 see the ECCV paper repository (https://github.com/janet-sw/Sparse-Reslim) , which contains the implementation used for the related ECCV weather forecasting work.
+
+
+### Citation
+If you use ORBIT-2 in your research, please cite both the software and the paper:
+
+```bibtex 
+@software{Wang_ORBIT-2_Scaling_Exascale,
+  author       = {Wang, Xiao and Choi, Jong-Youl and Lyngaas, Isaac and Yoon, Hong-Jun 
+                  and Aji, Ashwin and Kurihana, Takuya and Fan, Ming and Balaprakash, Prasanna 
+                  and Wang, Janet and Lu, Dan},
+  title        = {ORBIT-2 Weather and Climate Downscaling Software Repository},
+  url          = {https://github.com/XiaoWang-Github/ORBIT-2}
+}
+```
+If you use ORBIT-2 for downscaling, cite the following paper:
+
+```bibtex
+@misc{wang2025orbit2scalingexascalevision,
+  title         = {ORBIT-2: Scaling Exascale Vision Foundation Models for Weather and Climate Downscaling}, 
+  author        = {Xiao Wang and Jong-Youl Choi and Takuya Kurihaya and Isaac Lyngaas and Hong-Jun Yoon 
+                   and Xi Xiao and David Pugmire and Ming Fan and Nasik M. Nafi and Aristeidis Tsaris 
+                   and Ashwin M. Aji and Maliha Hossain and Mohamed Wahib and Dali Wang and Peter Thornton 
+                   and Prasanna Balaprakash and Moetasim Ashfaq and Dan Lu},
+  year          = {2025},
+  eprint        = {2505.04802},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.LG},
+  url           = {https://arxiv.org/abs/2505.04802}
+}
+```
+If you use ORBIT-2 for weather forecasting, cite the following paper:
 
 ```bibtex
 @misc{wang2026tokensbetterforecastssparse,
