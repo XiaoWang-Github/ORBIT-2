@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=7
 #SBATCH -t 00:10:00
-#SBATCH -q debug
+#SBATCH -p batch
 #SBATCH -o flash-%j.out
 #SBATCH -e flash-%j.error
 
@@ -16,51 +16,50 @@
 
 #ulimit -n 65536
 
-
-
 source ~/miniconda3/etc/profile.d/conda.sh
 
+CONDA_ENV_DIR=/lustre/orion/world-shared/lrn036/xf9/torch211-rocm713
 
 module load PrgEnv-gnu
-module load rocm/6.3.1
+module load rocm/7.13.0
 module load craype-accel-amd-gfx90a
-
-module unload darshan-runtime
 module unload libfabric
 
+conda activate ${CONDA_ENV_DIR}
 
-#eval "$(/lustre/orion/world-shared/stf218/atsaris/env_test_march/miniconda/bin/conda shell.bash hook)"
+SDK_CORE_LIB=${CONDA_ENV_DIR}/lib/python3.11/site-packages/_rocm_sdk_core/lib
+srun -N $SLURM_JOB_NUM_NODES --ntasks-per-node 1 bash -c "
+'${CONDA_ENV_DIR}/bin/python' -c \"
+import sys, torch
+assert '${CONDA_ENV_DIR}' in sys.prefix, f'unexpected prefix {sys.prefix!r}'
+assert '${CONDA_ENV_DIR}' in torch.__file__, f'unexpected torch path {torch.__file__!r}'
+print('sys.prefix:', sys.prefix)
+\" &&
+  add_unversioned_symlink() {
+    local dir=\"\$1\"; local versioned=\"\$2\"; local unversioned=\"\$3\"
+    if [ ! -e \"\${dir}/\${unversioned}\" ]; then
+      ln -sf \"\${versioned}\" \"\${dir}/\${unversioned}\"
+    fi
+  }
+  add_unversioned_symlink '${SDK_CORE_LIB}' libamdhip64.so.7 libamdhip64.so
+  add_unversioned_symlink '${SDK_CORE_LIB}' libhsa-runtime64.so.1 libhsa-runtime64.so
+"
 
-conda activate /lustre/orion/lrn036/world-shared/xf9/torch27
+module load cray-mpich/8.1.31 libfabric
+module load libfabric/1.20.1 rccl-net-plugin
 
-#source activate /lustre/orion/lrn036/world-shared/xf9/torch27-rocm63
-#conda activate /lustre/orion/lrn036/world-shared/xf9/torch26
+SDK_CORE=${CONDA_ENV_DIR}/lib/python3.11/site-packages/_rocm_sdk_core
+SDK_LIBS=${CONDA_ENV_DIR}/lib/python3.11/site-packages/_rocm_sdk_libraries_gfx90a
 
-#export LD_LIBRARY_PATH=/lustre/orion/world-shared/stf218/junqi/climax/rccl-plugin-rocm6/lib/:/opt/rocm-6.2.0/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=${SDK_CORE}/lib:${SDK_LIBS}/lib:${LD_LIBRARY_PATH}
+unset LD_PRELOAD
+unset NCCL_NET_PLUGIN
+export LD_PRELOAD=/opt/rocm-7.13.0/lib/librccl.so.1
 
-## DDStore and GPTL Timer
-
-#module use -a /lustre/orion/world-shared/lrn036/jyc/frontier/sw/modulefiles
-module load libfabric/1.22.0
-module use -a /lustre/orion/world-shared/lrn036/jyc/frontier/sw/modulefiles
-module load SR_tools/devel-mpich8.1.31
-module load aws-ofi-rccl/devel
-
-echo $LD_LIBRARY_PATH
-
-
-export FI_MR_CACHE_MONITOR=kdreg2     # Required to avoid a deadlock.
-export FI_CXI_DEFAULT_CQ_SIZE=131072  # Ask the network stack to allocate additional space to process message completions.
-export FI_CXI_DEFAULT_TX_SIZE=2048    # Ask the network stack to allocate additional space to hold pending outgoing messages.
-export FI_CXI_RX_MATCH_MODE=hybrid    # Allow the network stack to transition to software mode if necessary.
-
-export NCCL_NET_GDR_LEVEL=3           # Typically improves performance, but remove this setting if you encounter a hang/crash.
-export NCCL_CROSS_NIC=1               # On large systems, this NCCL setting has been found to improve performance
-export NCCL_SOCKET_IFNAME=hsn0        # NCCL/RCCL will use the high speed network to coordinate startup.
-export TORCH_NCCL_HIGH_PRIORITY=1     # Use high priority stream for the NCCL/RCCL Communicator.
+export HSA_NO_SCRATCH_RECLAIM=1
+unset NCCL_DEBUG
 
 export MIOPEN_DISABLE_CACHE=1
-export NCCL_PROTO=Simple
 export MIOPEN_USER_DB_PATH=/tmp/$JOBID
 mkdir -p $MIOPEN_USER_DB_PATH
 export HOSTNAME=$(hostname)
@@ -75,12 +74,12 @@ export PYTHONPATH=$PWD/../src:$PYTHONPATH
 
 export ORBIT_USE_DDSTORE=0 ## 1 (enabled) or 0 (disable)
 
-export LD_PRELOAD=/lib64/libgcc_s.so.1:/usr/lib64/libstdc++.so.6
+
 
 
 #time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-#python ./intermediate_downscaling.py ../configs/interm_8m_ft.yaml
+#python ./intermediate_downscaling.py ../../configs/interm_8m_ft.yaml
 
 time srun -n $((SLURM_JOB_NUM_NODES*8)) \
-python ./intermediate_downscaling.py ../configs/interm_8m.yaml
+python ./intermediate_downscaling.py ../../configs/interm_8m.yaml
 
