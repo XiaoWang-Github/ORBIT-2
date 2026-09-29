@@ -422,7 +422,7 @@ Sparse Residual Routing for Architecture Token Dropping
 see the ECCV paper repository (https://github.com/janet-sw/Sparse-Reslim) , which contains the implementation used for the related ECCV weather forecasting work.
 
 
-### Citation
+## Citation
 If you use ORBIT-2 in your research, please cite both the software and the paper:
 
 ```bibtex 
