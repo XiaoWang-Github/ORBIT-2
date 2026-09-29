@@ -7,7 +7,7 @@ from climate_learn.utils.fused_attn import FusedAttn
 import torch.distributed as dist
 
 import xformers
-from xformers.components.attention.core import scaled_dot_product_attention as xformers_sdpa
+import xformers.ops
 
 class Attention(nn.Module):
     def __init__(
