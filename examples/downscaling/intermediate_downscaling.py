@@ -37,7 +37,6 @@ from climate_learn.models.hub.components.cnn_blocks import (
 )
 from climate_learn.utils.fused_attn import FusedAttn
 from climate_learn.models.hub.components.pos_embed import interpolate_pos_embed
-from climate_learn.dist.profile import *
 from utils import seed_everything, init_par_groups
 
 
