@@ -1,2 +1,0 @@
-numpy>=1.23
-pytorch-lightning>=1.9
