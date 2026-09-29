@@ -62,6 +62,13 @@ pip install -e .
 
 
 
+## Sparse-Reslim Forecasting Example
+
+A minimal ERA5 1.0-degree, 120-hour deterministic forecasting example is
+available in [`examples/sparse_reslim_forecasting/`](examples/sparse_reslim_forecasting/README.md).
+For the complete ECCV implementation, see the
+[full Sparse-Reslim repository](https://github.com/janet-sw/Sparse-Reslim).
+
 ## Tutorial Example
 
 ### Frontier
