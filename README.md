@@ -1,4 +1,4 @@
-# ORBIT-2: Scaling Exascale Vision Foundation Models for Weather and Climate Downscaling
+# ORBIT-2: Scaling Exascale Vision Foundation Models for Weather and Climate Downscaling and Forecasting
 
 <div align="center">
   <img src="docs/figs/example_downscale.png" width="540px">
@@ -8,16 +8,22 @@
   <img src="docs/figs/example_downscale2.png" width="640px">
 </div>
 
-This repository contains code accompanying the paper [**ORBIT-2: Scaling Exascale Vision Foundation Models for Weather and Climate Downscaling**](https://arxiv.org/pdf/2505.04802).
+This repository contains code accompanying the paper [**ORBIT-2: Scaling Exascale Vision Foundation Models for Weather and Climate Downscaling**](https://arxiv.org/pdf/2505.04802). In addition to downscaling, this repository also shows how to use the demonstrated innovation for weather forecasting with a minimal example.
 
 ## Overview
-ORBIT-2 is a scalable foundation model for global, hyper-resolution climate downscaling. ORBIT-2 incorporates two key innovations:
+ORBIT-2 is a scalable vision foundation model for weather and climate applications, supporting both global hyper-resolution downscaling and deterministic weather forecasting. ORBIT-2 is designed to efficiently process large-scale spatiotemporal data and scale to extreme model sizes and sequence lengths on modern GPU supercomputers.
+
+ORBIT-2 incorporates two key innovations:
  (1) Residual Slim ViT (Reslim), a lightweight architecture with residual learning and Bayesian regularization for efficient, robust prediction; and 
  (2) TILES, a tile-wise sequence scaling algorithm that reduces self-attention complexity from quadratic to linear, enabling long-sequence processing and massive parallelism. 
  ORBIT-2 scales to 10 billion parameters across 65,536 GPUs, achieving up to 4.1 ExaFLOPS sustained throughput and 74–98% strong scaling efficiency. It supports downscaling to 0.9 km global resolution and processes sequences up to 4.2 billion tokens. On 7 km resolution benchmarks, ORBIT-2 achieves high accuracy with 𝑅2 scores in range of 0.98–0.99 against observation data.
 
+ The ORBIT-2 framework can be applied to different weather and climate learning tasks:
+(1) Weather and climate downscaling: Learn mappings from coarse-resolution climate/weather fields to high-resolution predictions.
+(2) Weather forecasting: Predict future atmospheric states directly from historical weather observations. A minimal Sparse-Reslim example predicts global ERA5 2-meter temperature (T2m) 120 hours (5 days) ahead at 1.0-degree resolution.
+
 ## Motivation
-Conventional downscaling methods, such as dynamical approaches (nested climate models) and statistical approaches (regression-based mappings), are limited. Dynamical downscaling requires massive supercomputers and weeks of computation, while statistical methods often lack physical consistency and generalization across regions or variables. ORBIT-2 overcomes these challenges by combining physics-informed AI with exascale scalability, enabling global hyper-resolution downscaling in seconds rather than weeks. Once trained, ORBIT-2 runs efficiently even on modest hardware or edge devices, providing global downscaling in millisecond. In addition, ORBIT-2 provides a single, generalizable foundation model that delivers physically consistent, high-resolution climate predictions across diverse regions and variables—something conventional methods cannot achieve.
+Conventional weather and climate modeling approaches face fundamental challenges in computational cost, resolution, and scalability. Dynamical approaches, including numerical weather prediction and nested climate models, require massive supercomputers and can take hours to weeks to generate high-resolution forecasts or downscaled climate data. Statistical and conventional machine learning approaches can be substantially faster, but often have limited generalization across regions, variables, and forecasting horizons and may not efficiently scale to the massive spatial and temporal sequences required for global modeling. ORBIT-2 addresses these challenges by combining scalable vision foundation models with exascale computing, enabling efficient learning and prediction for both weather forecasting and global hyper-resolution downscaling. Once trained, ORBIT-2 can perform predictions efficiently on modest hardware, enabling rapid inference for both forecasting and downscaling. By providing a unified, scalable foundation model that can learn from large-scale weather and climate data, ORBIT-2 offers a general framework for high-resolution prediction across diverse regions, variables, and weather and climate applications.
 
 ## Reslim Architecture
 Reslim is a vision transformer (ViT) architecture that operates and trains directly on adaptively compressed spatial inputs, significantly reducing sequence length while preserving critical information. It preserves accuracy and reduces uncertainty through a lightweight residual learning architecture, enabling efficient, low-overhead predictions.
@@ -29,7 +35,7 @@ Reslim is a vision transformer (ViT) architecture that operates and trains direc
 
 
 ## TILES Sequence Scaling Algorithm
-TILES is a ViT training algorithm that reduces ViT's self-attention complexity from quadratic to linear. It works by dividing images into overlapping tiles, each processed in parallel on separate Graphical Process Units (GPUs) using localized self-attention. Each tile's downscaled outputs are then seamlessly merged to the full image.
+TILES is a ViT training algorithm that reduces ViT's self-attention complexity from quadratic to linear. It works by dividing images into overlapping tiles, each processed in parallel on separate Graphical Process Units (GPUs) using localized self-attention. Each tile's downscaled or forecasted outputs are then seamlessly merged to the full image.
 
 <div align="center">
   <img src="docs/figs/TILES.png" width="400px">
@@ -61,15 +67,7 @@ pip install -e .
 ```
 
 
-
-## Sparse-Reslim Forecasting Example
-
-A minimal ERA5 1.0-degree, 120-hour deterministic forecasting example is
-available in [`examples/sparse_reslim_forecasting/`](examples/sparse_reslim_forecasting/README.md).
-For the complete ECCV implementation, see the
-[full Sparse-Reslim repository](https://github.com/janet-sw/Sparse-Reslim).
-
-## Tutorial Example
+## Tutorial Example for Downscaling
 
 ### Frontier
 #### Prerequisites
@@ -387,5 +385,50 @@ If you use ORBIT-2 in your research, please cite both the software and the paper
   archivePrefix = {arXiv},
   primaryClass  = {cs.LG},
   url           = {https://arxiv.org/abs/2505.04802}
-} 
+}
+```
+
+## Tutorial Example for Weather Forecasting
+### Data
+
+The example uses hourly ERA5 data at 1.0-degree resolution available on Frontier:
+```
+/lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/1.0_deg/
+```
+If you are using a different system, update the data path in the corresponding configuration or launch script.
+
+### Run
+To run the forecasting example on one GPU:
+```
+sbatch examples/sparse_reslim_forecasting/launch.sh
+```
+The launch script runs a 30-epoch, single-step 120-hour T2m forecast using a Sparse-Reslim keep ratio of 0.25.
+
+For a quick sanity check:
+```
+python examples/sparse_reslim_forecasting/train.py --smoke-test
+Full Sparse-Reslim Implementation
+```
+
+### Weather Forecasting Extension Work 
+This example is intended as a minimal demonstration of weather forecasting within the ORBIT-2 repository using the ORBIT-2 AI architecture innovation reslim and tiling algorithm. For additional weather forecasting implementation based on ORBIT-2, including:
+
+Multi-variable forecasting experiments
+Distributed training
+EDM probabilistic forecasting
+Additional forecasting configurations and experiments
+Sparse Residual Routing for Architecture Token Dropping
+
+see the ECCV paper repository (https://github.com/janet-sw/Sparse-Reslim) , which contains the implementation used for the related ECCV weather forecasting work.
+
+```bibtex
+@misc{wang2026tokensbetterforecastssparse,
+      title={Less Tokens, Better Forecasts: Sparse Residual Routing for Efficient Weather Prediction}, 
+      author={Janet Wang and Yunbei Zhang and Lin Zhao and Xi Xiao and Jihun Hamm and Xiao Wang},
+      year={2026},
+      eprint={2607.02829},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2607.02829}, 
+}
 ```
