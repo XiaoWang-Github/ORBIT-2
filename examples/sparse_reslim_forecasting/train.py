@@ -3,18 +3,46 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import random
 from pathlib import Path
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
+from torch.distributed.fsdp import (
+    FullOptimStateDictConfig,
+    FullStateDictConfig,
+    FullyShardedDataParallel as FSDP,
+    StateDictType,
+)
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 
 try:
+    from .config import ConfigError, load_forecast_config
+    from .distributed import (
+        DistributedContext,
+        cleanup_distributed,
+        initialize_distributed,
+        unwrap_model,
+        wrap_model,
+    )
     from .model import SparseReslim
+    from .tiling import build_tile_specs, extract_tile, stitch_tiles
+    from .utils import seed_everything
 except ImportError:  # Support `python examples/.../train.py` from the repo root.
+    from config import ConfigError, load_forecast_config
+    from distributed import (
+        DistributedContext,
+        cleanup_distributed,
+        initialize_distributed,
+        unwrap_model,
+        wrap_model,
+    )
     from model import SparseReslim
+    from tiling import build_tile_specs, extract_tile, stitch_tiles
+    from utils import seed_everything
 
 
 def _as_time_lat_lon(array: np.ndarray, variable: str) -> np.ndarray:
@@ -37,8 +65,14 @@ def _load_normalization(root: Path, variables: tuple[str, ...]):
             "Expected normalize_mean.npz and normalize_std.npz in the ERA5 root"
         )
     with np.load(means_path) as mean_file, np.load(stds_path) as std_file:
-        means = {name: float(np.asarray(mean_file[name]).reshape(-1)[0]) for name in variables}
-        stds = {name: float(np.asarray(std_file[name]).reshape(-1)[0]) for name in variables}
+        means = {
+            name: float(np.asarray(mean_file[name]).reshape(-1)[0])
+            for name in variables
+        }
+        stds = {
+            name: float(np.asarray(std_file[name]).reshape(-1)[0])
+            for name in variables
+        }
     if any(value == 0 for value in stds.values()):
         raise ValueError("normalization standard deviations must be non-zero")
     return means, stds
@@ -58,6 +92,11 @@ class ERA5ForecastDataset(IterableDataset):
         window: int,
         pred_range: int,
         shuffle_files: bool,
+        do_tiling: bool = False,
+        tile_div: int = 1,
+        tile_overlap: int = 0,
+        rank: int = 0,
+        world_size: int = 1,
     ) -> None:
         super().__init__()
         self.files = sorted((root / split).glob("*.npz"))
@@ -71,9 +110,17 @@ class ERA5ForecastDataset(IterableDataset):
         self.window = window
         self.pred_range = pred_range
         self.shuffle_files = shuffle_files
+        self.do_tiling = do_tiling
+        self.tile_div = tile_div
+        self.tile_overlap = tile_overlap
+        self.rank = rank
+        self.world_size = world_size
 
     def __iter__(self):
         files = list(self.files)
+        if self.world_size > 1 and len(files) >= self.world_size:
+            usable_files = len(files) // self.world_size * self.world_size
+            files = files[:usable_files][self.rank :: self.world_size]
         if self.shuffle_files:
             random.shuffle(files)
         worker = get_worker_info()
@@ -122,9 +169,21 @@ class ERA5ForecastDataset(IterableDataset):
                     ],
                     axis=0,
                 )
-                yield torch.from_numpy(inputs.astype(np.float32)), torch.from_numpy(
-                    targets.astype(np.float32)
+                input_tensor = torch.from_numpy(inputs.astype(np.float32))
+                target_tensor = torch.from_numpy(targets.astype(np.float32))
+                if not self.do_tiling:
+                    yield input_tensor, target_tensor
+                    continue
+
+                specs = build_tile_specs(
+                    tuple(input_tensor.shape[-2:]),
+                    self.tile_div,
+                    self.tile_overlap,
                 )
+                for spec in specs:
+                    yield extract_tile(input_tensor, spec), extract_tile(
+                        target_tensor, spec
+                    )
 
 
 def _infer_image_size(root: Path, variable: str) -> tuple[int, int]:
@@ -146,18 +205,228 @@ def _build_model(args, img_size: tuple[int, int]) -> SparseReslim:
         embed_dim=args.embed_dim,
         depth=args.depth,
         num_heads=args.num_heads,
+        mlp_ratio=args.mlp_ratio,
         keep_ratio=args.keep_ratio,
         num_dense_early=args.num_dense_early,
         num_sparse_middle=args.num_sparse_middle,
+        token_dropping=args.token_dropping,
+        compression_enabled=args.compression["enabled"],
+        compress_ratio=args.compression["compress_ratio"],
+        dropout=args.dropout,
     )
+
+
+def _resolve_model_image_size(
+    image_size: tuple[int, int], tiling
+) -> tuple[int, int]:
+    if not tiling["do_tiling"]:
+        return image_size
+    specs = build_tile_specs(image_size, tiling["div"], tiling["overlap"])
+    return specs[0].shape
+
+
+def _select_device(accelerator: str) -> torch.device:
+    if accelerator == "cpu":
+        return torch.device("cpu")
+    if accelerator == "gpu":
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "trainer.accelerator is 'gpu', but PyTorch cannot access a GPU"
+            )
+        return torch.device("cuda")
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _autocast_context(device: torch.device, data_type: str):
+    if device.type == "cuda" and data_type == "bfloat16":
+        return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    return nullcontext()
+
+
+def _run_epoch(
+    model,
+    loader,
+    device: torch.device,
+    data_type: str,
+    *,
+    optimizer: torch.optim.Optimizer | None = None,
+    max_batches: int | None = None,
+) -> float:
+    training = optimizer is not None
+    model.train(training)
+    total_loss = 0.0
+    total_samples = 0
+
+    grad_context = torch.enable_grad() if training else torch.no_grad()
+    with grad_context:
+        for batch_index, (inputs, targets) in enumerate(loader):
+            if max_batches is not None and batch_index >= max_batches:
+                break
+            inputs = inputs.to(device, non_blocking=device.type == "cuda")
+            targets = targets.to(device, non_blocking=device.type == "cuda")
+
+            if training:
+                optimizer.zero_grad(set_to_none=True)
+            with _autocast_context(device, data_type):
+                forecast = model(inputs)
+                loss = F.mse_loss(forecast, targets)
+            if not torch.isfinite(loss):
+                raise RuntimeError(f"Encountered non-finite MSE loss: {loss.item()}")
+            if training:
+                loss.backward()
+                optimizer.step()
+
+            batch_size = int(inputs.shape[0])
+            total_loss += float(loss.detach()) * batch_size
+            total_samples += batch_size
+
+    if dist.is_available() and dist.is_initialized():
+        totals = torch.tensor(
+            [total_loss, total_samples], dtype=torch.float64, device=device
+        )
+        dist.all_reduce(totals, op=dist.ReduceOp.SUM)
+        total_loss = float(totals[0].item())
+        total_samples = int(totals[1].item())
+    if total_samples == 0:
+        raise RuntimeError("The data loader did not produce any forecast samples")
+    return total_loss / total_samples
+
+
+def _load_checkpoint(
+    path: Path,
+    model,
+    optimizer=None,
+    context: DistributedContext | None = None,
+):
+    if not path.exists():
+        raise FileNotFoundError(f"Checkpoint does not exist: {path}")
+    checkpoint = torch.load(path, map_location="cpu")
+    state_dict = checkpoint.get("model_state_dict", checkpoint)
+    if context is not None and context.uses_fsdp:
+        load_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=False)
+        with FSDP.state_dict_type(
+            model, StateDictType.FULL_STATE_DICT, load_policy
+        ):
+            model.load_state_dict(state_dict)
+        if optimizer is not None and "optimizer_state_dict" in checkpoint:
+            optimizer_state = FSDP.optim_state_dict_to_load(
+                model, optimizer, checkpoint["optimizer_state_dict"]
+            )
+            optimizer.load_state_dict(optimizer_state)
+    else:
+        unwrap_model(model).load_state_dict(state_dict)
+        if optimizer is not None and "optimizer_state_dict" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    return checkpoint
+
+
+def _save_checkpoint(
+    path: Path,
+    model,
+    optimizer: torch.optim.Optimizer,
+    epoch: int,
+    best_val_mse: float,
+    epochs_without_improvement: int,
+    context: DistributedContext,
+) -> None:
+    if context.is_main:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    if context.distributed:
+        barrier_devices = (
+            [context.local_rank] if context.device.type == "cuda" else None
+        )
+        dist.barrier(device_ids=barrier_devices)
+
+    if context.uses_fsdp:
+        model_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        optimizer_policy = FullOptimStateDictConfig(
+            offload_to_cpu=True, rank0_only=True
+        )
+        with FSDP.state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            model_policy,
+            optimizer_policy,
+        ):
+            model_state = model.state_dict()
+            optimizer_state = FSDP.optim_state_dict(model, optimizer)
+    else:
+        model_state = unwrap_model(model).state_dict()
+        optimizer_state = optimizer.state_dict()
+
+    if context.is_main:
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": model_state,
+                "optimizer_state_dict": optimizer_state,
+                "best_val_mse": best_val_mse,
+                "epochs_without_improvement": epochs_without_improvement,
+            },
+            path,
+        )
+    if context.distributed:
+        dist.barrier(device_ids=barrier_devices)
 
 
 def run_smoke_test() -> None:
     torch.manual_seed(0)
-    model = SparseReslim(
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    inputs = torch.randn(2, 1, 1, 8, 16, device=device)
+    targets = torch.randn(2, 1, 8, 16, device=device)
+    cases = (
+        ("baseline", False, False, 32, 32),
+        ("compression_only", True, False, 8, 8),
+        ("token_dropping_only", False, True, 32, 8),
+        ("compression_and_token_dropping", True, True, 8, 2),
+    )
+
+    for name, compression_enabled, token_dropping, num_patches, num_active in cases:
+        model = SparseReslim(
+            variables=("2m_temperature",),
+            output_variables=("2m_temperature",),
+            img_size=(8, 16),
+            patch_size=2,
+            embed_dim=32,
+            depth=4,
+            num_heads=4,
+            keep_ratio=0.25,
+            num_dense_early=1,
+            num_sparse_middle=2,
+            token_dropping=token_dropping,
+            compression_enabled=compression_enabled,
+            compress_ratio=2,
+        ).to(device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        train_mse = _run_epoch(
+            model,
+            [(inputs, targets)],
+            device,
+            "float32",
+            optimizer=optimizer,
+        )
+        forecast = model(inputs)
+        assert forecast.shape == targets.shape
+        assert model.num_patches == num_patches
+        assert model.last_sparse_token_count == num_active
+        print(
+            f"Smoke test passed ({name}):",
+            f"device={device},",
+            f"forecast={tuple(forecast.shape)},",
+            f"active_tokens={model.last_sparse_token_count}/{model.num_patches},",
+            f"train_mse={train_mse:.4f}",
+        )
+
+    full_inputs = torch.randn(1, 1, 1, 12, 24, device=device)
+    full_targets = torch.randn(1, 1, 12, 24, device=device)
+    specs = build_tile_specs((12, 24), div=2, overlap=2)
+    identity_tiles = [extract_tile(full_inputs, spec) for spec in specs]
+    assert torch.equal(stitch_tiles(identity_tiles, specs, (12, 24)), full_inputs)
+
+    tiled_model = SparseReslim(
         variables=("2m_temperature",),
         output_variables=("2m_temperature",),
-        img_size=(8, 16),
+        img_size=specs[0].shape,
         patch_size=2,
         embed_dim=32,
         depth=4,
@@ -165,39 +434,68 @@ def run_smoke_test() -> None:
         keep_ratio=0.25,
         num_dense_early=1,
         num_sparse_middle=2,
+        token_dropping=True,
+        compression_enabled=True,
+        compress_ratio=2,
+    ).to(device)
+    optimizer = torch.optim.AdamW(tiled_model.parameters(), lr=1e-3)
+    tile_batches = [
+        (extract_tile(full_inputs, spec), extract_tile(full_targets, spec))
+        for spec in specs
+    ]
+    train_mse = _run_epoch(
+        tiled_model,
+        tile_batches,
+        device,
+        "float32",
+        optimizer=optimizer,
     )
-    inputs = torch.randn(2, 1, 1, 8, 16, requires_grad=True)
-    targets = torch.randn(2, 1, 8, 16)
-    forecast = model(inputs)
-    loss = F.mse_loss(forecast, targets)
-    loss.backward()
-    assert forecast.shape == targets.shape
-    assert model.last_sparse_token_count == 8  # 25% of 32 patch tokens.
+    tiled_model.eval()
+    with torch.no_grad():
+        predictions = [
+            tiled_model(extract_tile(full_inputs, spec)) for spec in specs
+        ]
+    stitched = stitch_tiles(predictions, specs, (12, 24))
+    assert stitched.shape == full_targets.shape
+    assert tiled_model.last_sparse_token_count == 2
     print(
-        "Smoke test passed:",
-        f"forecast={tuple(forecast.shape)},",
-        f"sparse_tokens={model.last_sparse_token_count}/{model.num_patches},",
-        f"loss={loss.item():.4f}",
+        "TILES smoke test passed:",
+        f"tiles={len(specs)},",
+        f"tile_shape={specs[0].shape},",
+        f"stitched={tuple(stitched.shape)},",
+        "compression=on, token_dropping=on,",
+        f"train_mse={train_mse:.4f}",
     )
 
 
-def run_training(args) -> None:
-    try:
-        import pytorch_lightning as pl
-        from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
-    except ImportError as error:
-        raise SystemExit(
-            "PyTorch Lightning is required for training. Run `pip install -e .` "
-            "from the ORBIT-2 repository root."
-        ) from error
-
-    if args.era5_dir is None:
-        raise SystemExit("ERA5_DIR is required unless --smoke-test is used")
+def _run_training(args, context: DistributedContext) -> None:
+    device = context.device
+    seed_everything(args.seed + context.rank)
     root = args.era5_dir.expanduser().resolve()
-    img_size = _infer_image_size(root, args.input_vars[0])
-    if img_size[0] % args.patch_size or img_size[1] % args.patch_size:
+    full_img_size = _infer_image_size(root, args.input_vars[0])
+    try:
+        img_size = _resolve_model_image_size(full_img_size, args.tiling)
+    except ValueError as error:
+        raise SystemExit(f"Invalid TILES configuration: {error}") from error
+    compress_ratio = (
+        args.compression["compress_ratio"] if args.compression["enabled"] else 1
+    )
+    if img_size[0] % compress_ratio or img_size[1] % compress_ratio:
         raise SystemExit(
-            f"Image size {img_size} is not divisible by patch size {args.patch_size}"
+            f"Image size {img_size} is not divisible by compression ratio "
+            f"{compress_ratio}"
+        )
+    compressed_img_size = (
+        img_size[0] // compress_ratio,
+        img_size[1] // compress_ratio,
+    )
+    if (
+        compressed_img_size[0] % args.patch_size
+        or compressed_img_size[1] % args.patch_size
+    ):
+        raise SystemExit(
+            f"Compressed image size {compressed_img_size} is not divisible by "
+            f"patch size {args.patch_size}"
         )
 
     common_dataset_args = dict(
@@ -207,6 +505,11 @@ def run_training(args) -> None:
         history=args.history,
         window=args.window,
         pred_range=args.pred_range,
+        do_tiling=args.tiling["do_tiling"],
+        tile_div=args.tiling["div"],
+        tile_overlap=args.tiling["overlap"],
+        rank=context.rank,
+        world_size=context.world_size,
     )
     train_dataset = ERA5ForecastDataset(
         split="train", shuffle_files=True, **common_dataset_args
@@ -223,105 +526,155 @@ def run_training(args) -> None:
             dataset,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
-            pin_memory=args.accelerator != "cpu",
+            pin_memory=device.type == "cuda",
         )
 
-    network = _build_model(args, img_size)
-
-    class ForecastModule(pl.LightningModule):
-        def __init__(self, net: SparseReslim):
-            super().__init__()
-            self.net = net
-
-        def forward(self, inputs):
-            return self.net(inputs)
-
-        def _shared_step(self, batch, stage: str):
-            inputs, targets = batch
-            loss = F.mse_loss(self(inputs), targets)
-            self.log(
-                f"{stage}/mse",
-                loss,
-                prog_bar=True,
-                on_step=stage == "train",
-                on_epoch=True,
-            )
-            return loss
-
-        def training_step(self, batch, batch_idx):
-            return self._shared_step(batch, "train")
-
-        def validation_step(self, batch, batch_idx):
-            self._shared_step(batch, "val")
-
-        def test_step(self, batch, batch_idx):
-            self._shared_step(batch, "test")
-
-        def configure_optimizers(self):
-            return torch.optim.AdamW(
-                self.parameters(), lr=args.lr, weight_decay=args.weight_decay
-            )
-
-    pl.seed_everything(args.seed, workers=True)
+    raw_network = _build_model(args, img_size)
+    active_tokens = raw_network.num_patches
+    if args.token_dropping and args.num_sparse_middle:
+        active_tokens = max(1, int(raw_network.num_patches * args.keep_ratio))
+    num_patches = raw_network.num_patches
+    network = wrap_model(raw_network, args, context)
+    optimizer = torch.optim.AdamW(
+        network.parameters(), lr=args.lr, weight_decay=args.weight_decay
+    )
     output_dir = args.output_dir.expanduser().resolve()
-    checkpoint = ModelCheckpoint(
-        dirpath=output_dir / "checkpoints",
-        monitor="val/mse",
-        mode="min",
-        filename="epoch-{epoch:03d}",
-        auto_insert_metric_name=False,
-        save_top_k=1,
+    best_checkpoint = output_dir / "checkpoints" / "best.pt"
+    start_epoch = 0
+    best_val_mse = float("inf")
+    epochs_without_improvement = 0
+
+    if args.pretrain:
+        _load_checkpoint(
+            Path(args.pretrain).expanduser(), network, context=context
+        )
+        if context.is_main:
+            print(f"Loaded pretrained weights from {args.pretrain}", flush=True)
+    if args.checkpoint:
+        checkpoint = _load_checkpoint(
+            Path(args.checkpoint).expanduser(),
+            network,
+            optimizer,
+            context,
+        )
+        start_epoch = int(checkpoint.get("epoch", -1)) + 1
+        best_val_mse = float(checkpoint.get("best_val_mse", best_val_mse))
+        epochs_without_improvement = int(
+            checkpoint.get("epochs_without_improvement", 0)
+        )
+        if context.is_main:
+            print(f"Resuming at epoch {start_epoch + 1}", flush=True)
+
+    if context.is_main:
+        print(
+            f"Training on {device} with native PyTorch | "
+            f"parallelism={context.mode} ({context.world_size} processes) | "
+            f"activation_checkpointing="
+            f"{'on' if args.parallelism['activation_checkpointing'] else 'off'} | "
+            f"tiling={'on' if args.tiling['do_tiling'] else 'off'} "
+            f"(div={args.tiling['div']}, overlap={args.tiling['overlap']}, "
+            f"tile={img_size}) | "
+            f"compression={'on' if args.compression['enabled'] else 'off'} "
+            f"(ratio={compress_ratio}) | "
+            f"token_dropping={'on' if args.token_dropping else 'off'} "
+            f"(keep_ratio={args.keep_ratio}, "
+            f"active_tokens={active_tokens}/{num_patches})",
+            flush=True,
+        )
+    for epoch in range(start_epoch, args.max_epochs):
+        train_mse = _run_epoch(
+            network,
+            loader(train_dataset),
+            device,
+            args.data_type,
+            optimizer=optimizer,
+            max_batches=args.limit_train_batches,
+        )
+        val_mse = _run_epoch(
+            network,
+            loader(val_dataset),
+            device,
+            args.data_type,
+            max_batches=args.limit_val_batches,
+        )
+        if context.is_main:
+            print(
+                f"Epoch {epoch + 1:03d}/{args.max_epochs:03d} "
+                f"train/mse={train_mse:.6f} val/mse={val_mse:.6f}",
+                flush=True,
+            )
+
+        if val_mse < best_val_mse:
+            best_val_mse = val_mse
+            epochs_without_improvement = 0
+            _save_checkpoint(
+                best_checkpoint,
+                network,
+                optimizer,
+                epoch,
+                best_val_mse,
+                epochs_without_improvement,
+                context,
+            )
+            if context.is_main:
+                print(f"Saved best checkpoint to {best_checkpoint}", flush=True)
+        else:
+            epochs_without_improvement += 1
+            if args.patience > 0 and epochs_without_improvement >= args.patience:
+                if context.is_main:
+                    print(
+                        f"Early stopping after {epochs_without_improvement} "
+                        "epochs without validation improvement",
+                        flush=True,
+                    )
+                break
+
+    if not best_checkpoint.exists():
+        raise RuntimeError(
+            "Training completed without producing a best checkpoint. "
+            "Check max_epochs and checkpoint settings."
+        )
+    _load_checkpoint(best_checkpoint, network, context=context)
+    test_mse = _run_epoch(
+        network,
+        loader(test_dataset),
+        device,
+        args.data_type,
+        max_batches=args.limit_test_batches,
     )
-    callbacks = [checkpoint]
-    if args.patience > 0:
-        callbacks.append(EarlyStopping(monitor="val/mse", patience=args.patience))
-
-    trainer_kwargs = {}
-    if args.limit_train_batches is not None:
-        trainer_kwargs["limit_train_batches"] = args.limit_train_batches
-    trainer = pl.Trainer(
-        accelerator=args.accelerator,
-        devices=args.devices,
-        max_epochs=args.max_epochs,
-        default_root_dir=output_dir,
-        callbacks=callbacks,
-        **trainer_kwargs,
-    )
-    module = ForecastModule(network)
-    trainer.fit(module, train_dataloaders=loader(train_dataset), val_dataloaders=loader(val_dataset))
-    trainer.test(module, dataloaders=loader(test_dataset), ckpt_path="best")
+    if context.is_main:
+        print(f"test/mse={test_mse:.6f}", flush=True)
 
 
-def parse_args():
+def run_training(args) -> None:
+    context = None
+    try:
+        context = initialize_distributed(args)
+        _run_training(args, context)
+    finally:
+        cleanup_distributed(context)
+
+
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Minimal Sparse-Reslim deterministic ERA5 forecasting example"
     )
-    parser.add_argument("era5_dir", nargs="?", type=Path)
+    parser.add_argument(
+        "config",
+        nargs="?",
+        type=Path,
+        help="STORM-style YAML configuration file",
+    )
     parser.add_argument("--smoke-test", action="store_true")
-    parser.add_argument("--input-vars", nargs="+", default=["2m_temperature"])
-    parser.add_argument("--output-vars", nargs="+", default=["2m_temperature"])
-    parser.add_argument("--history", type=int, default=1)
-    parser.add_argument("--window", type=int, default=1)
-    parser.add_argument("--pred-range", type=int, default=6)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--num-workers", type=int, default=2)
-    parser.add_argument("--max-epochs", type=int, default=30)
-    parser.add_argument("--patience", type=int, default=5)
-    parser.add_argument("--lr", type=float, default=5e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-5)
-    parser.add_argument("--patch-size", type=int, default=2)
-    parser.add_argument("--embed-dim", type=int, default=128)
-    parser.add_argument("--depth", type=int, default=6)
-    parser.add_argument("--num-heads", type=int, default=4)
-    parser.add_argument("--keep-ratio", type=float, default=0.25)
-    parser.add_argument("--num-dense-early", type=int, default=1)
-    parser.add_argument("--num-sparse-middle", type=int, default=4)
-    parser.add_argument("--accelerator", choices=["auto", "cpu", "gpu"], default="auto")
-    parser.add_argument("--devices", type=int, default=1)
-    parser.add_argument("--limit-train-batches", type=int)
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/sparse_reslim_forecasting"))
-    parser.add_argument("--seed", type=int, default=0)
-    return parser.parse_args()
+    cli_args = parser.parse_args(argv)
+    if cli_args.smoke_test:
+        return cli_args
+    if cli_args.config is None:
+        parser.error("CONFIG is required unless --smoke-test is used")
+    try:
+        return load_forecast_config(cli_args.config)
+    except ConfigError as error:
+        parser.error(str(error))
 
 
 if __name__ == "__main__":

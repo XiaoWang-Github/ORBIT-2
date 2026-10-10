@@ -395,31 +395,83 @@ The example uses hourly ERA5 data at 1.0-degree resolution available on Frontier
 ```
 /lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/1.0_deg/
 ```
-If you are using a different system, update the data path in the corresponding configuration or launch script.
+The data path, variables, forecast history, history window, forecast range, and
+training hyperparameters are configured in
+`configs/sparse_reslim_forecasting.yaml`. If you are using a different system,
+update `data.data_dir` in that file.
 
 ### Run
 To run the forecasting example on one GPU:
 ```
 sbatch examples/sparse_reslim_forecasting/launch.sh
 ```
-The launch script runs a 30-epoch, single-step 120-hour T2m forecast using a Sparse-Reslim keep ratio of 0.25.
+The launch script uses a native PyTorch training loop to run a 30-epoch,
+single-step 120-hour T2m forecast with a Sparse-Reslim keep ratio of 0.25.
+The best validation checkpoint is saved under
+`outputs/sparse_reslim_forecasting/checkpoints/best.pt`.
+
+Input compression and middle-layer token dropping are independent options.
+Set `compression.enabled` and `model.token_dropping` in the YAML to test either
+method alone, both together, or the dense baseline. Use a separate
+`trainer.output_dir` for each architecture because their checkpoints are not
+interchangeable.
+
+TILES is controlled by `tiling.do_tiling`, `tiling.div`, and
+`tiling.overlap`. Training streams the overlapping tiles as samples; inference
+processes every tile and crops the overlap before stitching a full-resolution
+forecast. The YAML values are chosen so enabling the switch is compatible with
+the configured ERA5 grid, compression ratio, and patch size.
+
+Native PyTorch distributed training is controlled by `trainer.devices` and the
+`parallelism` section. Their process counts must agree with the Slurm task
+count. `simple_ddp > 1` selects DDP, `fsdp > 1` selects FSDP `FULL_SHARD`, and
+using both selects FSDP `HYBRID_SHARD`. Transformer activation checkpointing is
+an independent YAML switch. For example, after setting `trainer.devices: 2`
+and `parallelism.fsdp: 2`, launch a two-GPU smoke run with:
+
+```bash
+sbatch --nodes=1 --ntasks-per-node=2 --gpus-per-node=2 \
+  examples/sparse_reslim_forecasting/launch.sh
+```
+
+Each process receives a disjoint subset of ERA5 files. Metrics are reduced
+across ranks, while FSDP checkpoints are gathered to a portable full state dict
+and written only by rank zero. `trainer.batch_size` is per process, so the
+effective global batch size is `batch_size * trainer.devices`.
+
+To use another forecasting configuration, set `CONFIG_PATH` when submitting:
+```
+CONFIG_PATH=/path/to/forecast.yaml sbatch examples/sparse_reslim_forecasting/launch.sh
+```
+
+To check the complete input-to-checkpoint pipeline using one train, validation,
+and test batch on Frontier:
+```
+CONFIG_PATH=configs/sparse_reslim_forecasting_smoke.yaml sbatch examples/sparse_reslim_forecasting/launch.sh
+```
 
 For a quick sanity check:
 ```
 python examples/sparse_reslim_forecasting/train.py --smoke-test
-Full Sparse-Reslim Implementation
 ```
 
-### Weather Forecasting Extension Work 
-This example is intended as a minimal demonstration of weather forecasting within the ORBIT-2 repository using the ORBIT-2 AI architecture innovation reslim and tiling algorithm. For additional weather forecasting implementation based on ORBIT-2, including:
+After training, visualize one test forecast together with its input, target,
+and signed error on Frontier:
+```
+CONFIG_PATH=configs/sparse_reslim_forecasting_smoke.yaml \
+  sbatch examples/sparse_reslim_forecasting/launch_visualize.sh
+```
+The figure is saved under
+`outputs/sparse_reslim_forecasting_smoke/visualizations/` by default.
 
-Multi-variable forecasting experiments
-Distributed training
-EDM probabilistic forecasting
-Additional forecasting configurations and experiments
-Sparse Residual Routing for Architecture Token Dropping
+### Full Sparse-Reslim implementation
 
-see the ECCV paper repository (https://github.com/janet-sw/Sparse-Reslim) , which contains the implementation used for the related ECCV weather forecasting work.
+This example is a compact deterministic forecasting workflow built around the
+ORBIT-2 Reslim and TILES components. The
+[ECCV Sparse-Reslim repository](https://github.com/janet-sw/Sparse-Reslim)
+contains the complete research implementation, including multi-variable
+experiments, EDM probabilistic forecasting, paper configurations, and the
+Sparse Residual Routing experiments.
 
 
 ## Citation

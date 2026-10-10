@@ -1,0 +1,79 @@
+#-----------   TRAINER  -------------------------------------------------------
+trainer:
+  max_epochs: 30
+  checkpoint:
+  pretrain:
+  batch_size: 1
+  num_workers: 2
+  data_type: bfloat16
+  gpu_type: amd
+  train_loss: mse
+  patience: 5
+  accelerator: gpu
+  devices: 1
+  output_dir: outputs/sparse_reslim_forecasting
+  limit_train_batches:
+  limit_val_batches:
+  limit_test_batches:
+  seed: 0
+
+#----------  Parallelism and Efficient Computing -------------------------------
+parallelism:
+  # Product of these four dimensions must equal trainer.devices and Slurm tasks.
+  # fsdp > 1: FULL_SHARD; simple_ddp > 1: DDP; both > 1: HYBRID_SHARD.
+  fsdp: 1
+  simple_ddp: 1
+  tensor_par: 1
+  seq_par: 1
+  activation_checkpointing: true
+
+#----------  TILES -------------------------------------------------------------
+# div and overlap are ready for the 180 x 360 grid; toggle do_tiling to enable.
+tiling:
+  do_tiling: false
+  div: 2
+  overlap: 2
+
+#----------  Reslim Input Data Compression ------------------------------------
+# Independent from middle-layer token dropping below. When enabled, the input
+# is compressed before patch embedding and decoded back to the original size.
+compression:
+  enabled: false
+  compress_ratio: 2
+
+# ---------------------------- MODEL -------------------------------------------
+model:
+  preset: sparse_reslim
+  lr: 5e-4
+  weight_decay: 1e-5
+  patch_size: 2
+  embed_dim: 128
+  depth: 6
+  num_heads: 4
+  mlp_ratio: 4.0
+  dropout: 0.0
+  token_dropping: true
+  keep_ratio: 0.25
+  num_dense_early: 1
+  num_sparse_middle: 4
+
+# ---------------------------- DATA --------------------------------------------
+data:
+  src:
+    ERA5_1: era5
+  pred_range:
+    ERA5_1: 120
+  history:
+    ERA5_1: 1
+  window:
+    ERA5_1: 1
+  data_dir:
+    ERA5_1: /lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/1.0_deg/
+  default_vars:
+    - 2m_temperature
+  dict_in_variables:
+    ERA5_1:
+      - 2m_temperature
+  dict_out_variables:
+    ERA5_1:
+      - 2m_temperature

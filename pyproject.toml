@@ -48,7 +48,8 @@ dependencies = [
     "rasterio>=1.3.7",
     "scikit-image",
     "einops",
-    "lpips"
+    "lpips",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

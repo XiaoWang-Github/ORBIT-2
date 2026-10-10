@@ -1,0 +1,71 @@
+# One-batch Frontier check of the complete ERA5 forecasting pipeline.
+trainer:
+  max_epochs: 1
+  checkpoint:
+  pretrain:
+  batch_size: 1
+  num_workers: 0
+  data_type: bfloat16
+  gpu_type: amd
+  train_loss: mse
+  patience: 0
+  accelerator: gpu
+  devices: 1
+  output_dir: outputs/sparse_reslim_forecasting_smoke
+  limit_train_batches: 1
+  limit_val_batches: 1
+  limit_test_batches: 1
+  seed: 0
+
+parallelism:
+  fsdp: 1
+  simple_ddp: 1
+  tensor_par: 1
+  seq_par: 1
+  activation_checkpointing: false
+
+tiling:
+  do_tiling: false
+  # Produces 96 x 192 tiles, compatible with ratio 3 and patch_size 4.
+  div: 2
+  overlap: 6
+
+compression:
+  enabled: false
+  # Ratio 3 is compatible with the 180 x 360 grid and patch_size 4 below.
+  compress_ratio: 3
+
+model:
+  preset: sparse_reslim
+  lr: 5e-4
+  weight_decay: 1e-5
+  patch_size: 4
+  embed_dim: 64
+  depth: 4
+  num_heads: 4
+  mlp_ratio: 4.0
+  dropout: 0.0
+  token_dropping: true
+  keep_ratio: 0.25
+  num_dense_early: 1
+  num_sparse_middle: 2
+
+data:
+  src:
+    ERA5_1: era5
+  pred_range:
+    ERA5_1: 120
+  history:
+    ERA5_1: 1
+  window:
+    ERA5_1: 1
+  data_dir:
+    ERA5_1: /lustre/orion/world-shared/lrn036/jyc/frontier/ClimaX-v2/data/ERA5-1hr-superres/1.0_deg/
+  default_vars:
+    - 2m_temperature
+  dict_in_variables:
+    ERA5_1:
+      - 2m_temperature
+  dict_out_variables:
+    ERA5_1:
+      - 2m_temperature

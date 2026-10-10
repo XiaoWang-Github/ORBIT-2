@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 
 class SparseReslim(nn.Module):
@@ -20,7 +21,9 @@ class SparseReslim(nn.Module):
     at each spatial location, and uses all tokens in the early and late
     Transformer blocks.  Only ``keep_ratio`` of the tokens enter the middle
     blocks.  Their residual updates are scattered back onto the dense grid, so
-    skipped tokens follow an identity path.
+    skipped tokens follow an identity path.  Optional input compression reduces
+    the spatial grid before patch embedding and decodes the forecast back to the
+    original resolution.
 
     Inputs may be ``[batch, time, variable, height, width]`` or
     ``[batch, variable, height, width]``.  Forecasts have shape
@@ -42,6 +45,9 @@ class SparseReslim(nn.Module):
         keep_ratio: float = 0.25,
         num_dense_early: int = 1,
         num_sparse_middle: int = 4,
+        token_dropping: bool = True,
+        compression_enabled: bool = False,
+        compress_ratio: int = 2,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
@@ -53,10 +59,31 @@ class SparseReslim(nn.Module):
             raise ValueError("dense early + sparse middle blocks exceed depth")
         if embed_dim % num_heads:
             raise ValueError("embed_dim must be divisible by num_heads")
+        if not isinstance(token_dropping, bool):
+            raise ValueError("token_dropping must be a boolean")
+        if not isinstance(compression_enabled, bool):
+            raise ValueError("compression_enabled must be a boolean")
+        if isinstance(compress_ratio, bool) or not isinstance(
+            compress_ratio, int
+        ):
+            raise ValueError("compress_ratio must be an integer")
+        if compress_ratio < 1:
+            raise ValueError("compress_ratio must be positive")
+        if compression_enabled and compress_ratio == 1:
+            raise ValueError(
+                "compress_ratio must be greater than 1 when compression is enabled"
+            )
 
         height, width = img_size
-        if height % patch_size or width % patch_size:
-            raise ValueError("img_size must be divisible by patch_size")
+        effective_compress_ratio = compress_ratio if compression_enabled else 1
+        if height % effective_compress_ratio or width % effective_compress_ratio:
+            raise ValueError("img_size must be divisible by compress_ratio")
+        compressed_height = height // effective_compress_ratio
+        compressed_width = width // effective_compress_ratio
+        if compressed_height % patch_size or compressed_width % patch_size:
+            raise ValueError(
+                "compressed img_size must be divisible by patch_size"
+            )
 
         self.variables = tuple(variables)
         self.output_variables = tuple(output_variables)
@@ -72,11 +99,15 @@ class SparseReslim(nn.Module):
         }
         self.history = history
         self.img_size = (height, width)
+        self.compression_enabled = compression_enabled
+        self.compress_ratio = effective_compress_ratio
+        self.compressed_img_size = (compressed_height, compressed_width)
         self.patch_size = patch_size
         self.keep_ratio = keep_ratio
+        self.token_dropping = token_dropping
         self.num_dense_early = num_dense_early
-        self.num_sparse_middle = num_sparse_middle
-        self.num_dense_late = depth - num_dense_early - num_sparse_middle
+        self.num_sparse_middle = num_sparse_middle if token_dropping else 0
+        self.num_dense_late = depth - num_dense_early - self.num_sparse_middle
 
         self.patch_embeds = nn.ModuleDict(
             {
@@ -89,8 +120,8 @@ class SparseReslim(nn.Module):
                 for variable in self.variables
             }
         )
-        grid_height = height // patch_size
-        grid_width = width // patch_size
+        grid_height = compressed_height // patch_size
+        grid_width = compressed_width // patch_size
         self.grid_size = (grid_height, grid_width)
         self.num_patches = grid_height * grid_width
 
@@ -123,8 +154,10 @@ class SparseReslim(nn.Module):
         self.norm = nn.LayerNorm(embed_dim)
 
         output_channels = len(self.output_variables)
+        self.output_patch_size = patch_size * self.compress_ratio
         self.decoder = nn.Linear(
-            embed_dim, output_channels * patch_size * patch_size
+            embed_dim,
+            output_channels * self.output_patch_size * self.output_patch_size,
         )
         residual_width = max(16, embed_dim // 4)
         self.residual_path = nn.Sequential(
@@ -154,7 +187,25 @@ class SparseReslim(nn.Module):
                 f"expected {len(self.variables)} variables, got {variables}"
             )
         if (height, width) != self.img_size:
-            raise ValueError(f"expected spatial size {self.img_size}, got {(height, width)}")
+            raise ValueError(
+                f"expected spatial size {self.img_size}, got {(height, width)}"
+            )
+
+        if self.compression_enabled:
+            inputs = inputs.flatten(0, 1)
+            inputs = F.interpolate(
+                inputs,
+                size=self.compressed_img_size,
+                mode="bilinear",
+                align_corners=False,
+                antialias=True,
+            )
+            inputs = inputs.reshape(
+                batch,
+                history,
+                variables,
+                *self.compressed_img_size,
+            )
 
         # Each variable is embedded from all history channels independently.
         embedded = []
@@ -213,7 +264,7 @@ class SparseReslim(nn.Module):
     def _unpatchify(self, patches: torch.Tensor) -> torch.Tensor:
         batch = patches.shape[0]
         grid_height, grid_width = self.grid_size
-        patch = self.patch_size
+        patch = self.output_patch_size
         channels = len(self.output_variables)
         patches = patches.reshape(
             batch, grid_height, grid_width, channels, patch, patch
